@@ -1,0 +1,14 @@
+services:
+  netrack-dcim:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: netrack_dcim_app
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - NODE_ENV=production
+    labels:
+      - "com.netrack.description=DCIM Infrastructure Management Platform"
