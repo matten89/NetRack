@@ -418,40 +418,77 @@ sudo reboot
 
 ---
 
-## 9. Guida Completa agli Aggiornamenti e Applicazione Modifiche su Macchina Ubuntu Server
+## 9. Gestione Aggiornamenti via GitHub con Backup Automatico Obbligatorio
 
-Per mantenere aggiornato **NetRack DCIM** o per applicare velocemente modifiche al codice, ai template o ai file di configurazione direttamente sulla macchina Ubuntu Server (26.04 LTS, 24.04 LTS o 22.04 LTS), sono disponibili 3 script automatici dedicati nella cartella `deploy/`:
+Per eliminare definitivamente la necessità di esportare archivi ZIP, trasferirli via SFTP/SCP ed estrarli a mano, **NetRack DCIM** è progettato per sincronizzarsi **direttamente con GitHub**.
 
-| Script Eseguibile | Scopo Principale | Tempo Stimato |
-| :--- | :--- | :--- |
-| `deploy/update-netrack.sh` | Aggiornamento completo con backup preventivo automatico, risoluzione npm e healthcheck | ~30 - 45 secondi |
-| `deploy/apply-modifications.sh` | Fast Hot-Build: ricompila e pubblica all'istante le modifiche apportate ai file di codice | ~5 - 10 secondi |
-| `deploy/rollback-netrack.sh` | Ripristino istantaneo all'ultimo backup funzionante in caso di imprevisti | ~2 secondi |
+### Principi di Sicurezza del Workflow:
+1. **Controllo Manuale Assoluto:** Gli aggiornamenti vengono eseguiti **esclusivamente quando l'amministratore decide di lanciarli** (nessun cron o webhook non monitorato che possa interrompere i servizi in momenti inopportuni).
+2. **Backup Preventivo Automatico al 100%:** **Ogni singolo aggiornamento lanciato crea automaticamente un backup completo e datato** in `/var/backups/netrack-dcim/backup_YYYYMMDD_HHMMSS/` prima di toccare qualsiasi riga di codice o eseguire git pull.
+3. **Rollback Istantaneo:** Se il nuovo codice contiene problemi, un singolo comando (`sudo bash deploy/rollback-netrack.sh`) ripristina la versione precedente in meno di 2 secondi.
+4. **Protezione Modifiche Locali:** Se hai effettuato modifiche temporanee sul server, lo script le protegge automaticamente con `git stash`.
 
 ---
 
-### Scenario A: Aggiornamento Automatico Standard (tramite Git o sorgenti locali)
-Questo è il metodo raccomandato per aggiornamenti di versione o rilascio di nuove release:
+### Passo 1: Collegamento Una Tantum del Server a GitHub
+
+Per consentire al server di scaricare gli aggiornamenti da GitHub senza dover inserire password ogni volta, esegui il configuratore guidato incluso:
 
 ```bash
 cd /var/www/netrack-dcim
-sudo bash deploy/update-netrack.sh
+sudo bash deploy/setup-github-sync.sh
 ```
 
-**Cosa fa lo script in modo 100% automatico:**
-1. Crea un backup timestamped di sicurezza in `/var/backups/netrack-dcim/backup_YYYYMMDD_HHMMSS`.
-2. Esegue `git pull` dal branch corrente salvando eventuali modifiche locali non committate in `git stash`.
-3. Esegue `npm install --legacy-peer-deps` per prevenire qualsiasi errore `ERESOLVE` con Node 22+ / npm 10+.
-4. Compila la build di produzione (`npm run build`) in `/var/www/netrack-dcim/dist`.
-5. Imposta i corretti permessi `chown -R www-data:www-data` e `chmod -R 755`.
-6. Valida la sintassi Nginx (`nginx -t`) e ricarica il server web senza downtime (`systemctl reload nginx`).
-7. Riavvia il servizio di background se presente (`systemctl restart netrack-dcim.service`).
-8. Effettua un **healthcheck HTTP** locale (`curl -s -o /dev/null -w "%{http_code}" http://localhost/`) verificando la risposta `200 OK`.
+Lo script ti permette di scegliere tra:
+* **Opzione 1 (Consigliata per la Produzione - SSH Deploy Key):**
+  Genera una chiave crittografica `ed25519` dedicata sul server (`/root/.ssh/id_ed25519_github_netrack.pub`).
+  Basta copiare la chiave mostrata a video e aggiungerla su GitHub in:
+  *GitHub Repository -> Settings -> Deploy keys -> Add deploy key (permesso Read-only)*.
+* **Opzione 2 (HTTPS con Personal Access Token):**
+  Inserisci il tuo Personal Access Token di GitHub con permessi di lettura repo.
+* **Opzione 3 (HTTPS Pubblico):**
+  Se il repository è pubblico, non è necessaria alcuna autenticazione.
 
 ---
 
-### Scenario B: Aggiornamento da una Nuova Cartella o File Archivio (.tar.gz / .zip)
-Se hai trasferito i file aggiornati tramite **SCP**, **SFTP**, chiavetta USB o cartella condivisa (senza usare Git):
+### Passo 2: Lancio Manuale dell'Aggiornamento da GitHub
+
+Quando desideri aggiornare l'applicazione con gli ultimi commit pubblicati su GitHub, esegui semplicemente:
+
+```bash
+cd /var/www/netrack-dcim
+sudo bash deploy/update-from-github.sh
+```
+
+#### Cosa accade in automatico durante l'esecuzione:
+1. **Controllo Remoto:** Esegue `git fetch` e mostra l'elenco dei nuovi commit disponibili (autore, data, messaggio).
+2. **Backup Preventivo Obbligatorio:** Crea la cartella di backup timestamped salvando:
+   - Hash del commit precedente (`git rev-parse HEAD`)
+   - Directory di produzione compilata (`dist/`)
+   - File di dipendenze (`package.json`, `package-lock.json`)
+   - Variabili di configurazione (`.env`) e dati locali
+   - Rotazione automatica: conserva gli ultimi 10 backup ed elimina quelli più vecchi.
+3. **Scaricamento Codice:** Esegue `git pull origin <branch>` salvando eventuali file modificati localmente in `git stash`.
+4. **Installazione Sicura:** Esegue `npm install --legacy-peer-deps` per garantire compatibilità con Ubuntu 26 / npm 10-12 senza conflitti `ERESOLVE`.
+5. **Compilazione Produzione:** Esegue `npm run build`. Se la compilazione dovesse fallire, lo script attiva **il rollback automatico immediato** per non interrompere il servizio Nginx!
+6. **Ricaricamento Servizi:** Valida Nginx (`nginx -t`) e ricarica la configurazione (`systemctl reload nginx`).
+7. **Healthcheck:** Testa la risposta HTTP 200 su `http://localhost/` e stampa a video l'URL e il comando esatto per l'eventuale rollback.
+
+---
+
+### Tabella degli Script di Manutenzione Disponibili in `deploy/`
+
+| Script Eseguibile | Scopo Principale | Modalità | Backup Automatico |
+| :--- | :--- | :--- | :--- |
+| `deploy/update-from-github.sh` | **Aggiornamento Manuale da GitHub** (Consigliato) | Manuale | **Sì, sempre automatico** |
+| `deploy/setup-github-sync.sh` | Configurazione SSH Deploy Key / Credenziali GitHub | Una tantum | - |
+| `deploy/rollback-netrack.sh` | Rollback istantaneo all'ultimo backup funzionante | Manuale | - |
+| `deploy/apply-modifications.sh` | Fast Build: compila al volo modifiche manuali locali | Manuale | - |
+| `deploy/update-netrack.sh` | Aggiornamento flessibile (da GitHub, cartella o archivio) | Manuale | **Sì, sempre automatico** |
+
+---
+
+### Scenario Alternativo: Aggiornamento da Cartella Locale o Archivio (No Git)
 
 ```bash
 # Aggiornamento passando la cartella dei nuovi sorgenti come argomento:

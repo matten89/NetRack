@@ -60,8 +60,16 @@ if [ ! -d "${APP_DIR}" ]; then
     fi
 fi
 
-echo -e "\n${BLUE}[1/6] Creazione Backup di Sicurezza Preventivo...${NC}"
+echo -e "\n${BLUE}[1/6] Creazione Backup di Sicurezza Preventivo Obbligatorio...${NC}"
 mkdir -p "${BACKUP_DIR}"
+
+if command -v git &>/dev/null && [ -d "${APP_DIR}/.git" ]; then
+    CURRENT_REV=$(cd "${APP_DIR}" && git rev-parse HEAD 2>/dev/null || true)
+    if [ -n "${CURRENT_REV}" ]; then
+        echo "${CURRENT_REV}" > "${BACKUP_DIR}/git_commit_hash.txt"
+        echo -e " -> Salvato riferimento commit precedente: ${CURRENT_REV:0:8}"
+    fi
+fi
 
 if [ -d "${APP_DIR}/dist" ]; then
     echo -e " -> Salvataggio build precedente in ${BACKUP_DIR}/dist"
@@ -72,12 +80,24 @@ if [ -f "${APP_DIR}/package.json" ]; then
     cp "${APP_DIR}/package.json" "${BACKUP_DIR}/package.json"
 fi
 
+if [ -f "${APP_DIR}/package-lock.json" ]; then
+    cp "${APP_DIR}/package-lock.json" "${BACKUP_DIR}/package-lock.json"
+fi
+
+if [ -f "${APP_DIR}/.env" ]; then
+    echo -e " -> Salvataggio configurazioni (.env)..."
+    cp "${APP_DIR}/.env" "${BACKUP_DIR}/.env"
+fi
+
 # Salva configurazioni o file personalizzati se presenti
 if [ -d "${APP_DIR}/data" ]; then
     cp -r "${APP_DIR}/data" "${BACKUP_DIR}/data"
 fi
 
-echo -e "${GREEN}[OK] Backup di ripristino completato in: ${BACKUP_DIR}${NC}"
+# Rotazione backup (conserva gli ultimi 10)
+ls -1td ${BACKUP_BASE_DIR}/backup_* 2>/dev/null | tail -n +11 | xargs rm -rf 2>/dev/null || true
+
+echo -e "${GREEN}[OK] Backup di sicurezza preventivo completato in: ${BACKUP_DIR}${NC}"
 
 echo -e "\n${BLUE}[2/6] Applicazione modifiche e nuovi sorgenti...${NC}"
 

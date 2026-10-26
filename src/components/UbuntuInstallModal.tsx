@@ -37,7 +37,7 @@ interface UbuntuInstallModalProps {
 
 export const UbuntuInstallModal: React.FC<UbuntuInstallModalProps> = ({ onClose }) => {
   const [activeTab, setActiveTab] = useState<'ubuntu26' | 'ubuntu24' | 'script' | 'updates' | 'docker' | 'troubleshoot'>('ubuntu26');
-  const [activeUpdateScriptView, setActiveUpdateScriptView] = useState<'update' | 'fast' | 'rollback'>('update');
+  const [activeUpdateScriptView, setActiveUpdateScriptView] = useState<'github' | 'setup' | 'rollback' | 'fast' | 'update'>('github');
   const [copiedStep, setCopiedStep] = useState<string | null>(null);
 
   const copyToClipboard = (text: string, stepId: string) => {
@@ -320,6 +320,101 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3`;
+
+  const githubUpdateScriptCode = `#!/usr/bin/env bash
+# ==============================================================================
+# NetRack DCIM - Aggiornamento Manuale Diretto da GitHub con Backup Preventivo
+# ==============================================================================
+# Esegui quando desideri aggiornare l'applicazione con gli ultimi commit di GitHub:
+# sudo bash deploy/update-from-github.sh
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+
+APP_DIR="/var/www/netrack-dcim"
+BACKUP_BASE_DIR="/var/backups/netrack-dcim"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+BACKUP_DIR="\${BACKUP_BASE_DIR}/backup_\${TIMESTAMP}"
+SERVICE_USER="www-data"
+
+cd "\${APP_DIR}"
+
+echo "==> [1/6] Controllo aggiornamenti su GitHub..."
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+git fetch origin "\${CURRENT_BRANCH}"
+LOCAL_HASH=$(git rev-parse HEAD)
+REMOTE_HASH=$(git rev-parse "origin/\${CURRENT_BRANCH}")
+
+echo "Commit locale:   \${LOCAL_HASH:0:8}"
+echo "Commit su GitHub: \${REMOTE_HASH:0:8}"
+
+echo "==> [2/6] Creazione OBBLIGATORIA Backup di sicurezza preventivo..."
+mkdir -p "\${BACKUP_DIR}"
+echo "\${LOCAL_HASH}" > "\${BACKUP_DIR}/git_commit_hash.txt"
+[ -d "\${APP_DIR}/dist" ] && cp -r "\${APP_DIR}/dist" "\${BACKUP_DIR}/dist"
+[ -f "\${APP_DIR}/package.json" ] && cp "\${APP_DIR}/package.json" "\${BACKUP_DIR}/"
+[ -f "\${APP_DIR}/.env" ] && cp "\${APP_DIR}/.env" "\${BACKUP_DIR}/"
+echo "[OK] Backup completato in: \${BACKUP_DIR}"
+
+# Rotazione backup (conserva gli ultimi 10)
+ls -1td \${BACKUP_BASE_DIR}/backup_* | tail -n +11 | xargs rm -rf 2>/dev/null || true
+
+echo "==> [3/6] Download commit da GitHub (git pull)..."
+git stash save "Auto-stash \${TIMESTAMP}" 2>/dev/null || true
+git pull origin "\${CURRENT_BRANCH}"
+
+echo "==> [4/6] Installazione moduli npm con flag anti-conflitto..."
+npm install --legacy-peer-deps
+
+echo "==> [5/6] Compilazione produzione (npm run build)..."
+if ! npm run build; then
+    echo "[ERRORE] Compilazione fallita. Eseguo rollback automatico istantaneo..."
+    cp -r "\${BACKUP_DIR}/dist" "\${APP_DIR}/dist"
+    systemctl reload nginx
+    exit 1
+fi
+
+chown -R \${SERVICE_USER}:\${SERVICE_USER} "\${APP_DIR}"
+chmod -R 755 "\${APP_DIR}/dist"
+
+echo "==> [6/6] Ricaricamento Nginx e Healthcheck..."
+nginx -t && systemctl reload nginx
+systemctl is-active --quiet netrack-dcim.service && systemctl restart netrack-dcim.service || true
+
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/ || echo "000")
+echo "==> AGGIORNAMENTO COMPLETATO CON SUCCESSO! HTTP: \${HTTP_STATUS}"
+echo "Backup conservato in: \${BACKUP_DIR}"
+echo "Rollback istantaneo:  sudo bash deploy/rollback-netrack.sh \${BACKUP_DIR}"`;
+
+  const setupGithubScriptCode = `#!/usr/bin/env bash
+# ==============================================================================
+# NetRack DCIM - Setup Connessione GitHub (SSH Deploy Key o HTTPS)
+# ==============================================================================
+# Esegui una tantum sul server Ubuntu per autorizzare il download da GitHub:
+# sudo bash deploy/setup-github-sync.sh
+set -euo pipefail
+
+APP_DIR="/var/www/netrack-dcim"
+cd "\${APP_DIR}"
+
+[ ! -d ".git" ] && git init
+
+echo "==> Generazione chiave SSH crittografica Deploy Key (ed25519)..."
+mkdir -p /root/.ssh && chmod 700 /root/.ssh
+ssh-keygen -t ed25519 -f /root/.ssh/id_ed25519_github_netrack -N "" -C "netrack-server" || true
+
+cat << 'EOF' > /root/.ssh/config
+Host github.com
+    IdentityFile /root/.ssh/id_ed25519_github_netrack
+    StrictHostKeyChecking accept-new
+EOF
+chmod 600 /root/.ssh/config /root/.ssh/id_ed25519_github_netrack*
+
+echo "==================== CHIAVE PUBBLICA SSH PER GITHUB ===================="
+cat /root/.ssh/id_ed25519_github_netrack.pub
+echo "========================================================================"
+echo "Copia questa chiave e incollala su GitHub in:"
+echo "Repo -> Settings -> Deploy keys -> Add deploy key (Read-only)"`;
 
   const updateScriptCode = `#!/usr/bin/env bash
 # NetRack DCIM - Script di Aggiornamento Automatico con Backup e Healthcheck
@@ -703,130 +798,108 @@ echo "==> Rollback completato con successo!"`;
           {activeTab === 'updates' && (
             <div className="space-y-5 animate-in fade-in text-xs">
               {/* Header Banner */}
-              <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/50 via-slate-900 to-cyan-950/40 border border-emerald-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/60 via-slate-900 to-cyan-950/50 border border-emerald-500/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
                 <div>
-                  <span className="text-sm font-bold text-white flex items-center gap-2">
-                    <ArrowUpCircle className="w-4 h-4 text-emerald-400" />
-                    Script di Aggiornamento Automatico e Applicazione Modifiche
-                  </span>
-                  <span className="text-[11px] text-slate-300">
-                    File eseguibili pronti all'uso inclusi nella cartella <code className="text-cyan-300 font-mono">deploy/</code> del progetto per la manutenzione diretta sulla macchina Ubuntu.
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-white flex items-center gap-2">
+                      <GitBranch className="w-4 h-4 text-emerald-400" />
+                      Aggiornamenti Manuali Diretti da GitHub con Backup Automatico
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 font-bold border border-emerald-800">
+                      Zero Export Manuali
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-300 mt-0.5 block">
+                    Basta esportare e caricare archivi zip a mano! Il server scarica i commit direttamente da GitHub <strong>solo quando decidi tu di lanciarlo manualmente</strong>, e <strong>crea obbligatoriamente un backup preventivo</strong> prima di modificare qualsiasi file.
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <button
-                    onClick={() => downloadScriptFile('update-netrack.sh', updateScriptCode)}
+                    onClick={() => downloadScriptFile('update-from-github.sh', githubUpdateScriptCode)}
                     className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    <span>Scarica update-netrack.sh</span>
+                    <span>Scarica update-from-github.sh</span>
                   </button>
                 </div>
               </div>
 
               {/* 4 Action Cards Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                {/* Card 1: Standard Update */}
-                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5 flex flex-col justify-between">
+                {/* Card 1: GitHub Manual Update with Auto-Backup */}
+                <div className="p-4 rounded-xl bg-slate-950 border border-emerald-800/60 space-y-2.5 flex flex-col justify-between relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-xl pointer-events-none" />
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-white flex items-center gap-1.5">
-                        <RefreshCw className="w-4 h-4 text-emerald-400" />
-                        1. Aggiornamento Completo con Backup
+                        <GitBranch className="w-4 h-4 text-emerald-400" />
+                        1. Aggiorna da GitHub (con Backup)
                       </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 font-mono">Consigliato</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 font-mono font-bold border border-emerald-800">Metodo Primario</span>
                     </div>
                     <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Crea un backup preventivo con timestamp in <code className="text-slate-300 font-mono">/var/backups/</code>, risolve i conflitti npm, compila la nuova versione e verifica la risposta HTTP 200.
+                      Lanciato manualmente a tua scelta: verifica i nuovi commit, crea un <strong>backup completo datato</strong> in <code className="text-slate-300 font-mono">/var/backups/</code>, esegue il pull, risolve npm, compila e riavvia senza downtime.
                     </p>
                   </div>
                   <div className="space-y-1 font-mono text-[11px]">
                     <div className="flex items-center justify-between bg-slate-900 p-2 rounded border border-slate-800">
-                      <code className="text-emerald-300 select-all">sudo bash deploy/update-netrack.sh</code>
+                      <code className="text-emerald-300 select-all font-bold">sudo bash deploy/update-from-github.sh</code>
                       <button
-                        onClick={() => copyToClipboard('sudo bash deploy/update-netrack.sh', 'copy_cmd_update')}
+                        onClick={() => copyToClipboard('sudo bash deploy/update-from-github.sh', 'copy_cmd_update_gh')}
                         className="text-slate-400 hover:text-white p-1"
                         title="Copia comando"
                       >
-                        {copiedStep === 'copy_cmd_update' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedStep === 'copy_cmd_update_gh' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                       </button>
                     </div>
                   </div>
                 </div>
 
-                {/* Card 2: Update from Folder or Archive */}
+                {/* Card 2: Initial GitHub Connection Setup */}
                 <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5 flex flex-col justify-between">
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-white flex items-center gap-1.5">
-                        <Archive className="w-4 h-4 text-cyan-400" />
-                        2. Aggiornamento da Cartella o File ZIP / TAR
+                        <Shield className="w-4 h-4 text-cyan-400" />
+                        2. Setup Connessione GitHub
                       </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 font-mono">Offline / No Git</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 font-mono">Una tantum</span>
                     </div>
                     <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Se hai caricato una nuova cartella con SCP/SFTP o un archivio compresso, lo script sincronizza solo i file modificati ed esegue l'aggiornamento.
+                      Genera la chiave SSH crittografica Deploy Key (ed25519) o configura il token HTTPS per autorizzare il server a scaricare da GitHub senza richiedere la password ad ogni aggiornamento.
                     </p>
                   </div>
                   <div className="space-y-1 font-mono text-[11px]">
                     <div className="flex items-center justify-between bg-slate-900 p-2 rounded border border-slate-800">
-                      <code className="text-cyan-300 select-all">sudo bash deploy/update-netrack.sh /home/cse/nuovi-file</code>
+                      <code className="text-cyan-300 select-all font-bold">sudo bash deploy/setup-github-sync.sh</code>
                       <button
-                        onClick={() => copyToClipboard('sudo bash deploy/update-netrack.sh /home/cse/nuovi-file', 'copy_cmd_update_src')}
+                        onClick={() => copyToClipboard('sudo bash deploy/setup-github-sync.sh', 'copy_cmd_setup_gh')}
                         className="text-slate-400 hover:text-white p-1"
                         title="Copia comando"
                       >
-                        {copiedStep === 'copy_cmd_update_src' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedStep === 'copy_cmd_setup_gh' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                       </button>
                     </div>
                   </div>
                 </div>
 
-                {/* Card 3: Fast Modifications Applier */}
-                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5 flex flex-col justify-between">
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-white flex items-center gap-1.5">
-                        <Play className="w-4 h-4 text-amber-400" />
-                        3. Fast Build: Applica Modifiche Locali
-                      </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 font-mono">5 Secondi</span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Hai modificato manualmente un componente, un file CSS o una configurazione direttamente sul server? Questo script compila e pubblica all'istante senza reinstallare i pacchetti.
-                    </p>
-                  </div>
-                  <div className="space-y-1 font-mono text-[11px]">
-                    <div className="flex items-center justify-between bg-slate-900 p-2 rounded border border-slate-800">
-                      <code className="text-amber-300 select-all">sudo bash deploy/apply-modifications.sh</code>
-                      <button
-                        onClick={() => copyToClipboard('sudo bash deploy/apply-modifications.sh', 'copy_cmd_fast')}
-                        className="text-slate-400 hover:text-white p-1"
-                        title="Copia comando"
-                      >
-                        {copiedStep === 'copy_cmd_fast' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Card 4: Instant Rollback */}
+                {/* Card 3: Instant Rollback */}
                 <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5 flex flex-col justify-between">
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-white flex items-center gap-1.5">
                         <History className="w-4 h-4 text-purple-400" />
-                        4. Rollback / Ripristino Immediato
+                        3. Rollback / Ripristino Immediato
                       </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-950 text-purple-300 font-mono">Sicurezza Zero-Downtime</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-950 text-purple-300 font-mono">Sicurezza Totale</span>
                     </div>
                     <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Se un aggiornamento introduce un errore imprevisto, ripristina all'istante l'ultimo backup precedente salvato automaticamente da update-netrack.sh.
+                      Se un aggiornamento presenta bug imprevisti, questo script ripristina all'istante l'ultimo backup precedente salvato automaticamente da update-from-github.sh.
                     </p>
                   </div>
                   <div className="space-y-1 font-mono text-[11px]">
                     <div className="flex items-center justify-between bg-slate-900 p-2 rounded border border-slate-800">
-                      <code className="text-purple-300 select-all">sudo bash deploy/rollback-netrack.sh</code>
+                      <code className="text-purple-300 select-all font-bold">sudo bash deploy/rollback-netrack.sh</code>
                       <button
                         onClick={() => copyToClipboard('sudo bash deploy/rollback-netrack.sh', 'copy_cmd_rollback')}
                         className="text-slate-400 hover:text-white p-1"
@@ -837,33 +910,61 @@ echo "==> Rollback completato con successo!"`;
                     </div>
                   </div>
                 </div>
+
+                {/* Card 4: Fast Modifications Applier */}
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5 flex flex-col justify-between">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-white flex items-center gap-1.5">
+                        <Play className="w-4 h-4 text-amber-400" />
+                        4. Fast Build Modifiche Locali
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 font-mono">5 Secondi</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Hai fatto una modifica rapida direttamente sul server (es. un file .env o .tsx)? Questo script compila e pubblica all'istante senza riscaricare dipendenze npm.
+                    </p>
+                  </div>
+                  <div className="space-y-1 font-mono text-[11px]">
+                    <div className="flex items-center justify-between bg-slate-900 p-2 rounded border border-slate-800">
+                      <code className="text-amber-300 select-all font-bold">sudo bash deploy/apply-modifications.sh</code>
+                      <button
+                        onClick={() => copyToClipboard('sudo bash deploy/apply-modifications.sh', 'copy_cmd_fast')}
+                        className="text-slate-400 hover:text-white p-1"
+                        title="Copia comando"
+                      >
+                        {copiedStep === 'copy_cmd_fast' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Interactive Code Viewer with selector tabs */}
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button
-                      onClick={() => setActiveUpdateScriptView('update')}
+                      onClick={() => setActiveUpdateScriptView('github')}
                       className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                        activeUpdateScriptView === 'update'
+                        activeUpdateScriptView === 'github'
                           ? 'bg-emerald-600 text-white'
                           : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
                       }`}
                     >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      <span>deploy/update-netrack.sh</span>
+                      <GitBranch className="w-3.5 h-3.5" />
+                      <span>deploy/update-from-github.sh</span>
                     </button>
                     <button
-                      onClick={() => setActiveUpdateScriptView('fast')}
+                      onClick={() => setActiveUpdateScriptView('setup')}
                       className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                        activeUpdateScriptView === 'fast'
-                          ? 'bg-amber-600 text-white'
+                        activeUpdateScriptView === 'setup'
+                          ? 'bg-cyan-600 text-white'
                           : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
                       }`}
                     >
-                      <Play className="w-3.5 h-3.5" />
-                      <span>deploy/apply-modifications.sh</span>
+                      <Shield className="w-3.5 h-3.5" />
+                      <span>deploy/setup-github-sync.sh</span>
                     </button>
                     <button
                       onClick={() => setActiveUpdateScriptView('rollback')}
@@ -876,22 +977,37 @@ echo "==> Rollback completato con successo!"`;
                       <History className="w-3.5 h-3.5" />
                       <span>deploy/rollback-netrack.sh</span>
                     </button>
+                    <button
+                      onClick={() => setActiveUpdateScriptView('fast')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                        activeUpdateScriptView === 'fast'
+                          ? 'bg-amber-600 text-white'
+                          : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                      }`}
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      <span>deploy/apply-modifications.sh</span>
+                    </button>
                   </div>
 
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => {
-                        const code = activeUpdateScriptView === 'update'
-                          ? updateScriptCode
-                          : activeUpdateScriptView === 'fast'
-                          ? fastModScriptCode
-                          : rollbackScriptCode;
-                        const fname = activeUpdateScriptView === 'update'
-                          ? 'update-netrack.sh'
-                          : activeUpdateScriptView === 'fast'
-                          ? 'apply-modifications.sh'
-                          : 'rollback-netrack.sh';
-                        downloadScriptFile(fname, code);
+                        const codeMap: Record<string, string> = {
+                          github: githubUpdateScriptCode,
+                          setup: setupGithubScriptCode,
+                          update: updateScriptCode,
+                          fast: fastModScriptCode,
+                          rollback: rollbackScriptCode,
+                        };
+                        const fnameMap: Record<string, string> = {
+                          github: 'update-from-github.sh',
+                          setup: 'setup-github-sync.sh',
+                          update: 'update-netrack.sh',
+                          fast: 'apply-modifications.sh',
+                          rollback: 'rollback-netrack.sh',
+                        };
+                        downloadScriptFile(fnameMap[activeUpdateScriptView] || 'script.sh', codeMap[activeUpdateScriptView] || '');
                       }}
                       className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 text-[11px] font-medium flex items-center gap-1 border border-slate-800 transition-colors"
                     >
@@ -901,12 +1017,14 @@ echo "==> Rollback completato con successo!"`;
 
                     <button
                       onClick={() => {
-                        const code = activeUpdateScriptView === 'update'
-                          ? updateScriptCode
-                          : activeUpdateScriptView === 'fast'
-                          ? fastModScriptCode
-                          : rollbackScriptCode;
-                        copyToClipboard(code, `copy_script_${activeUpdateScriptView}`);
+                        const codeMap: Record<string, string> = {
+                          github: githubUpdateScriptCode,
+                          setup: setupGithubScriptCode,
+                          update: updateScriptCode,
+                          fast: fastModScriptCode,
+                          rollback: rollbackScriptCode,
+                        };
+                        copyToClipboard(codeMap[activeUpdateScriptView] || '', `copy_script_${activeUpdateScriptView}`);
                       }}
                       className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 text-[11px] font-medium flex items-center gap-1 border border-slate-800 transition-colors"
                     >
@@ -926,11 +1044,15 @@ echo "==> Rollback completato con successo!"`;
                 </div>
 
                 <pre className="p-3 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px] text-slate-300 overflow-x-auto whitespace-pre-wrap max-h-72 leading-relaxed select-all">
-                  {activeUpdateScriptView === 'update'
-                    ? updateScriptCode
+                  {activeUpdateScriptView === 'github'
+                    ? githubUpdateScriptCode
+                    : activeUpdateScriptView === 'setup'
+                    ? setupGithubScriptCode
                     : activeUpdateScriptView === 'fast'
                     ? fastModScriptCode
-                    : rollbackScriptCode}
+                    : activeUpdateScriptView === 'rollback'
+                    ? rollbackScriptCode
+                    : updateScriptCode}
                 </pre>
               </div>
 

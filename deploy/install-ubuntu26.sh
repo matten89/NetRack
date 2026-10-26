@@ -165,6 +165,9 @@ systemctl daemon-reload
 systemctl enable netrack-dcim.service
 systemctl restart netrack-dcim.service
 
+# Rendi eseguibili tutti gli script di manutenzione
+chmod +x /var/www/netrack-dcim/deploy/*.sh 2>/dev/null || true
+
 echo -e "\n${GREEN}====================================================================${NC}"
 echo -e "${GREEN}      Installazione di NetRack DCIM su Ubuntu 26 Completata!         ${NC}"
 echo -e "${GREEN}====================================================================${NC}"
@@ -172,6 +175,9 @@ SERVER_IP=$(hostname -I | awk '{print $1}')
 echo -e "L'applicazione è ora accessibile tramite browser su:"
 echo -e "  -> Nginx Web (Porta 80):    ${CYAN}http://${SERVER_IP}${NC}"
 echo -e "  -> Preview Daemon (Porta 3000): ${CYAN}http://${SERVER_IP}:3000${NC}"
+echo -e "\nGestione Aggiornamenti Futuri via GitHub (Senza esportare file a mano):"
+echo -e "  1. Configura GitHub una tantum:    ${YELLOW}sudo bash /var/www/netrack-dcim/deploy/setup-github-sync.sh${NC}"
+echo -e "  2. Aggiorna da GitHub (con backup): ${YELLOW}sudo bash /var/www/netrack-dcim/deploy/update-from-github.sh${NC}"
 echo -e "\nPer abilitare certificato SSL gratuito Let's Encrypt HTTPS:"
 echo -e "  ${YELLOW}sudo apt install -y certbot python3-certbot-nginx${NC}"
 echo -e "  ${YELLOW}sudo certbot --nginx -d dcim.tuodominio.it${NC}"
