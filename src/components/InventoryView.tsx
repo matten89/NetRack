@@ -39,14 +39,20 @@ import {
   HardDrive,
   Link as LinkIcon,
   ChevronDown,
+  Tag,
+  KeyRound,
+  ShieldCheck,
+  Play,
+  RotateCw,
 } from 'lucide-react';
 import { getSiteHierarchyBreadcrumb, isValidIPv4 } from '../utils/validation';
 
 interface InventoryViewProps {
   onOpenBrands: () => void;
+  onOpenDeviceTypes?: () => void;
 }
 
-export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) => {
+export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands, onOpenDeviceTypes }) => {
   const {
     state,
     addDevice,
@@ -59,12 +65,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
     removeSFPFromDevice,
     runDiscoveryOnDevice,
     openTerminal,
+    launchRealSSH,
   } = useDCIM();
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('ALL');
   const [filterBrand, setFilterBrand] = useState('ALL');
+  const [filterDeviceType, setFilterDeviceType] = useState('ALL');
   const [filterPower, setFilterPower] = useState('ALL');
   const [filterAvailable, setFilterAvailable] = useState('ALL');
 
@@ -73,10 +81,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
   const [showCreateDropdown, setShowCreateDropdown] = useState(false);
   const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
   const [detailDeviceId, setDetailDeviceId] = useState<string | null>(null);
+  const [discoveryFeedback, setDiscoveryFeedback] = useState<string | null>(null);
 
   // Form state
   const [formCategory, setFormCategory] = useState<ItemCategory>('DEVICE');
   const [formBrandId, setFormBrandId] = useState(state.brands[0]?.id || '');
+  const [formDeviceTypeId, setFormDeviceTypeId] = useState<string>(state.deviceTypes[0]?.id || 'switch');
   const [formModel, setFormModel] = useState('');
   const [formSN, setFormSN] = useState('');
   const [formPositionMode, setFormPositionMode] = useState<'SITE' | 'RACK'>('RACK');
@@ -90,6 +100,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
   const [formAvailable, setFormAvailable] = useState<AvailabilityStatus>('SI');
   const [formUser, setFormUser] = useState('');
   const [formIPManagement, setFormIPManagement] = useState('');
+  const [formSshPort, setFormSshPort] = useState<number>(22);
+  const [formSshUsername, setFormSshUsername] = useState<string>('admin');
+  const [formSshPassword, setFormSshPassword] = useState<string>('');
+  const [showPasswordInForm, setShowPasswordInForm] = useState(false);
+  const [showSshFormSection, setShowSshFormSection] = useState(false);
   const [formNotes, setFormNotes] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -125,6 +140,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
     const category = dev.category || 'DEVICE';
     if (filterCategory !== 'ALL' && category !== filterCategory) return false;
     if (filterBrand !== 'ALL' && dev.brandId !== filterBrand) return false;
+    if (filterDeviceType !== 'ALL' && dev.deviceTypeId !== filterDeviceType) return false;
     if (filterPower !== 'ALL' && dev.isPoweredOn !== filterPower) return false;
     if (filterAvailable !== 'ALL' && dev.isAvailable !== filterAvailable) return false;
 
@@ -152,6 +168,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
     setEditingDeviceId(null);
     setFormCategory(cat);
     setFormBrandId(cat === 'PDU' ? 'apc' : state.brands[0]?.id || '');
+    const defaultDevType = state.deviceTypes[0]?.id || 'switch';
+    setFormDeviceTypeId(defaultDevType);
+    const dt = state.deviceTypes.find((t) => t.id === defaultDevType);
     setFormModel(
       cat === 'MODULE'
         ? 'Scheda Espansione 8x 10G SFP+'
@@ -167,12 +186,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
     setFormRackId(state.racks[0]?.id || '');
     setFormRackRU(1);
     setFormRackFace(cat === 'PDU' ? 'REAR' : 'FRONT');
-    setFormHeightRU(cat === 'MODULE' || cat === 'SFP' ? 0 : 1);
+    setFormHeightRU(cat === 'MODULE' || cat === 'SFP' ? 0 : (dt?.defaultHeightRU || 1));
     setFormIsNonRackable(false);
     setFormPower('SI');
     setFormAvailable('SI');
     setFormUser('');
     setFormIPManagement('');
+    setFormSshPort(22);
+    setFormSshUsername('admin');
+    setFormSshPassword('');
+    setShowPasswordInForm(false);
+    setShowSshFormSection(false);
     setFormNotes('');
     setFormError(null);
 
@@ -195,6 +219,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
     setEditingDeviceId(dev.id);
     setFormCategory(dev.category || 'DEVICE');
     setFormBrandId(dev.brandId);
+    setFormDeviceTypeId(dev.deviceTypeId || state.deviceTypes[0]?.id || 'switch');
     setFormModel(dev.model);
     setFormSN(dev.serialNumber);
     setFormPositionMode(dev.rackId ? 'RACK' : 'SITE');
@@ -208,6 +233,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
     setFormAvailable(dev.isAvailable);
     setFormUser(dev.user || '');
     setFormIPManagement(dev.ipManagement || '');
+    setFormSshPort(dev.sshPort || 22);
+    setFormSshUsername(dev.sshUsername || 'admin');
+    setFormSshPassword(dev.sshPassword || '');
+    setShowPasswordInForm(false);
+    setShowSshFormSection(Boolean(dev.sshUsername || dev.sshPassword || (dev.sshPort && dev.sshPort !== 22)));
     setFormNotes(dev.notes || '');
     setFormError(null);
 
@@ -261,6 +291,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
     const payload: Partial<Device> = {
       category: formCategory,
       brandId: formBrandId,
+      deviceTypeId: formCategory === 'DEVICE' ? formDeviceTypeId : undefined,
       model: formModel.trim(),
       serialNumber: formSN.trim(),
       siteNodeId: !isSubItem && formPositionMode === 'SITE' ? formSiteNodeId : undefined,
@@ -273,6 +304,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
       isAvailable: formAvailable,
       user: formUser.trim(),
       ipManagement: formIPManagement.trim(),
+      sshPort: formCategory === 'DEVICE' && formIPManagement.trim() ? formSshPort : undefined,
+      sshUsername: formCategory === 'DEVICE' && formIPManagement.trim() ? formSshUsername.trim() : undefined,
+      sshPassword: formCategory === 'DEVICE' && formIPManagement.trim() ? formSshPassword : undefined,
       notes: formNotes.trim(),
       parentDeviceId: isSubItem && formParentDeviceId ? formParentDeviceId : undefined,
       parentSlotOrPort: isSubItem ? formParentSlotOrPort.trim() : undefined,
@@ -447,6 +481,20 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
 
         {/* Filters & Add Dropdown */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Device Type Filter */}
+          <select
+            value={filterDeviceType}
+            onChange={(e) => setFilterDeviceType(e.target.value)}
+            className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-cyan-500 font-medium"
+          >
+            <option value="ALL">Tutte le Tipologie</option>
+            {state.deviceTypes.map((dt) => (
+              <option key={dt.id} value={dt.id}>
+                {dt.name}
+              </option>
+            ))}
+          </select>
+
           {/* Brand Filter */}
           <select
             value={filterBrand}
@@ -482,6 +530,19 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
             <option value="SI">Disponibile (SI)</option>
             <option value="NO">Non Disponibile (NO)</option>
           </select>
+
+          {/* Manage Tipologie Button */}
+          {onOpenDeviceTypes && (
+            <button
+              type="button"
+              onClick={onOpenDeviceTypes}
+              className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 text-xs text-cyan-400 hover:text-cyan-300 flex items-center gap-1.5 transition-colors"
+              title="Personalizza Tipologie di Apparato (Router, Switch, Firewall, AP...)"
+            >
+              <Tag className="w-3.5 h-3.5" />
+              <span>Tipologie</span>
+            </button>
+          )}
 
           {/* New Item Dropdown Button */}
           <div className="relative">
@@ -572,6 +633,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
               ) : (
                 filteredDevices.map((dev) => {
                   const brand = state.brands.find((b) => b.id === dev.brandId);
+                  const devType = dev.deviceTypeId ? state.deviceTypes.find((t) => t.id === dev.deviceTypeId) : null;
                   const category = dev.category || 'DEVICE';
                   const parentDevice = dev.parentDeviceId
                     ? state.devices.find((d) => d.id === dev.parentDeviceId)
@@ -585,13 +647,28 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
 
                   return (
                     <tr key={dev.id} className="hover:bg-slate-800/40 transition-colors">
-                      {/* Category Badge */}
+                      {/* Category & Device Type Badge */}
                       <td className="py-3 px-4">
                         {category === 'DEVICE' && (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-blue-950 text-blue-300 border border-blue-800 flex items-center gap-1 w-fit">
-                            <Server className="w-3 h-3" />
-                            <span>Chassis</span>
-                          </span>
+                          <div className="flex flex-col gap-1 items-start">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-blue-950 text-blue-300 border border-blue-800 flex items-center gap-1 w-fit">
+                              <Server className="w-3 h-3" />
+                              <span>Chassis</span>
+                            </span>
+                            {devType && (
+                              <span
+                                className="px-2 py-0.5 rounded text-[10px] font-semibold border flex items-center gap-1 w-fit shadow-sm"
+                                style={{
+                                  backgroundColor: `${devType.color}18`,
+                                  borderColor: `${devType.color}60`,
+                                  color: devType.color,
+                                }}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: devType.color }} />
+                                <span>{devType.name}</span>
+                              </span>
+                            )}
+                          </div>
                         )}
                         {category === 'MODULE' && (
                           <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-950 text-purple-300 border border-purple-800 flex items-center gap-1 w-fit">
@@ -732,11 +809,19 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
                               {dev.ipManagement}
                             </span>
                             <button
-                              onClick={() => openTerminal(dev)}
-                              className="p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded transition-colors"
-                              title="Apri Terminale SSH"
+                              onClick={() => launchRealSSH(dev)}
+                              className="px-2 py-0.5 rounded bg-emerald-950 hover:bg-emerald-800 text-emerald-300 hover:text-white border border-emerald-700/70 flex items-center gap-1 font-mono text-[10px] transition-all shadow-sm"
+                              title={`Apri sessione SSH reale in una nuova scheda (${dev.sshUsername || 'admin'}@${dev.ipManagement}:${dev.sshPort || 22})`}
                             >
-                              <Terminal className="w-3.5 h-3.5" />
+                              <Terminal className="w-3 h-3 text-emerald-400" />
+                              <span>SSH Reale</span>
+                            </button>
+                            <button
+                              onClick={() => openTerminal(dev)}
+                              className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                              title="Dettagli credenziali e configurazione SSH"
+                            >
+                              <KeyRound className="w-3 h-3 text-slate-400" />
                             </button>
                           </div>
                         ) : dev.category === 'SFP' ? (
@@ -1057,6 +1142,45 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
                 </div>
               )}
 
+              {/* Device Type (Tipologia) when Category is DEVICE */}
+              {formCategory === 'DEVICE' && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-slate-300">
+                      Tipologia Apparato <span className="text-rose-400">*</span>
+                    </label>
+                    {onOpenDeviceTypes && (
+                      <button
+                        type="button"
+                        onClick={onOpenDeviceTypes}
+                        className="text-[11px] text-cyan-400 hover:underline flex items-center gap-1"
+                      >
+                        <Tag className="w-3 h-3" />
+                        <span>+ Gestisci tipologie</span>
+                      </button>
+                    )}
+                  </div>
+                  <select
+                    value={formDeviceTypeId}
+                    onChange={(e) => {
+                      const newType = e.target.value;
+                      setFormDeviceTypeId(newType);
+                      const dt = state.deviceTypes.find((t) => t.id === newType);
+                      if (dt && !editingDeviceId) {
+                        setFormHeightRU(dt.defaultHeightRU || 1);
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs outline-none focus:border-cyan-500 font-medium"
+                  >
+                    {state.deviceTypes.map((dt) => (
+                      <option key={dt.id} value={dt.id}>
+                        {dt.name} (Default: {dt.defaultHeightRU} RU)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {/* Brand & Model */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -1309,6 +1433,83 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
                 </div>
               )}
 
+              {/* SSH Management Credentials Section */}
+              {formCategory === 'DEVICE' && (
+                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <KeyRound className="w-4 h-4 text-emerald-400" />
+                      <span className="text-xs font-bold text-white uppercase tracking-wider">
+                        Credenziali SSH Management & Discovery
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowSshFormSection(!showSshFormSection)}
+                      className="text-xs text-cyan-400 hover:text-cyan-300 font-medium"
+                    >
+                      {showSshFormSection ? 'Nascondi parametri' : 'Configura credenziali'}
+                    </button>
+                  </div>
+
+                  {showSshFormSection && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-800">
+                      <div>
+                        <label className="block text-[11px] text-slate-300 mb-1">
+                          Porta SSH:
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={formSshPort}
+                          onChange={(e) => setFormSshPort(parseInt(e.target.value, 10) || 22)}
+                          className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white text-xs outline-none focus:border-cyan-500 font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] text-slate-300 mb-1">
+                          Username SSH:
+                        </label>
+                        <input
+                          type="text"
+                          value={formSshUsername}
+                          onChange={(e) => setFormSshUsername(e.target.value)}
+                          placeholder="es. admin, root"
+                          className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white text-xs outline-none focus:border-cyan-500 font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[11px] text-slate-300">
+                            Password SSH:
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setShowPasswordInForm(!showPasswordInForm)}
+                            className="text-[10px] text-slate-400 hover:text-white"
+                          >
+                            {showPasswordInForm ? 'Nascondi' : 'Mostra'}
+                          </button>
+                        </div>
+                        <input
+                          type={showPasswordInForm ? 'text' : 'password'}
+                          value={formSshPassword}
+                          onChange={(e) => setFormSshPassword(e.target.value)}
+                          placeholder="Password apparato..."
+                          className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-white text-xs outline-none focus:border-cyan-500 font-mono"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <p className="text-[11px] text-slate-500">
+                    Utilizzate per l'avvio della sessione WebSSH reale originata dall'IP del server e per la scansione automatica dei vicini LLDP/CDP.
+                  </p>
+                </div>
+              )}
+
               {/* Notes with character limit indicator */}
               <div>
                 <div className="flex justify-between items-center mb-1">
@@ -1375,13 +1576,23 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
 
               <div className="flex items-center gap-2">
                 {detailDev.ipManagement && (
-                  <button
-                    onClick={() => openTerminal(detailDev)}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow"
-                  >
-                    <Terminal className="w-3.5 h-3.5" />
-                    <span>Terminale SSH</span>
-                  </button>
+                  <>
+                    <button
+                      onClick={() => launchRealSSH(detailDev)}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow"
+                      title={`Apri sessione SSH reale su nuova scheda (${detailDev.sshUsername || 'admin'}@${detailDev.ipManagement})`}
+                    >
+                      <Terminal className="w-3.5 h-3.5" />
+                      <span>SSH Reale (Nuova Scheda)</span>
+                    </button>
+                    <button
+                      onClick={() => openTerminal(detailDev)}
+                      className="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs flex items-center gap-1"
+                      title="Credenziali & Configurazione SSH"
+                    >
+                      <KeyRound className="w-3.5 h-3.5 text-slate-400" />
+                    </button>
+                  </>
                 )}
                 <button
                   onClick={() => setDetailDeviceId(null)}
@@ -1394,6 +1605,75 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenBrands }) =>
 
             {/* Content Tabs / Sections */}
             <div className="p-6 overflow-y-auto space-y-6">
+              {/* Discovery Feedback Toast/Banner */}
+              {discoveryFeedback && (
+                <div className="p-3.5 rounded-xl bg-cyan-950/80 border border-cyan-700 text-cyan-200 text-xs flex items-center gap-2.5 animate-in fade-in shadow-lg">
+                  <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0" />
+                  <span className="flex-1">{discoveryFeedback}</span>
+                  <button
+                    onClick={() => setDiscoveryFeedback(null)}
+                    className="text-cyan-400 hover:text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              {/* SSH & Network Discovery Card */}
+              {detailDev.category !== 'MODULE' && detailDev.category !== 'SFP' && (
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-emerald-950/80 border border-emerald-800/80 flex items-center justify-center text-emerald-400">
+                        <Terminal className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                          <span>Accesso SSH di Management & Topologia</span>
+                          {detailDev.deviceTypeId && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-900 border border-slate-700 text-cyan-300">
+                              {state.deviceTypes.find((t) => t.id === detailDev.deviceTypeId)?.name || 'Device'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-400 font-mono">
+                          {detailDev.ipManagement ? (
+                            <span>{detailDev.sshUsername || 'admin'}@{detailDev.ipManagement}:{detailDev.sshPort || 22}</span>
+                          ) : (
+                            <span className="text-amber-400">Nessun indirizzo IP Management configurato</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {detailDev.ipManagement && (
+                        <button
+                          onClick={() => launchRealSSH(detailDev)}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow"
+                        >
+                          <Terminal className="w-3.5 h-3.5" />
+                          <span>Connetti SSH Reale</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          const res = runDiscoveryOnDevice(detailDev.id);
+                          setDiscoveryFeedback(
+                            `Scansione completata su ${detailDev.model}: rilevate ${res.discoveredCount || 0} interfacce e ${res.newCables || 0} nuove interconnessioni salvate nella mappa topologica.`
+                          );
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-cyan-700 hover:bg-cyan-600 text-white font-semibold text-xs flex items-center gap-1.5 shadow"
+                        title="Esegui scansione LLDP e CDP per scoprire apparati adiacenti"
+                      >
+                        <RotateCw className="w-3.5 h-3.5" />
+                        <span>Scansione LLDP / CDP</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Section 1: Modules / Line cards */}
               <div>
                 <div className="flex items-center justify-between mb-3">

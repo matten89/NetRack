@@ -50,7 +50,8 @@ export function canInstallItem(
   face: RackFace | 'BOTH',
   rackItems: RackInstalledItem[],
   totalRU: number,
-  excludeItemId?: string
+  excludeItemId?: string,
+  devices?: any[]
 ): { allowed: boolean; reason?: string } {
   if (startRU < 1) {
     return { allowed: false, reason: 'Il valore RU iniziale non può essere inferiore a 1.' };
@@ -74,9 +75,17 @@ export function canInstallItem(
     for (let ru = startRU; ru < startRU + heightRU; ru++) {
       if (occupied.has(ru)) {
         const occ = occupied.get(ru)!;
+        const occDevice = devices?.find((d) => d.id === occ.item.deviceId);
+        const nameDesc = occDevice
+          ? `"${occDevice.model}" (S/N: ${occDevice.serialNumber})`
+          : occ.item.isPDU
+          ? `PDU/Ciabatta (ID ${occ.item.id})`
+          : occ.item.isShelf
+          ? `Mensola Rack (ID ${occ.item.id})`
+          : `Elemento ID ${occ.item.id}`;
         return {
           allowed: false,
-          reason: `Conflitto di spazio al RU ${ru} (${checkFace}): già occupato dall'elemento ID ${occ.item.id}${occ.item.isShelf ? ' (Mensola)' : ''}.`,
+          reason: `Installazione non riuscita: la RU ${ru} (${checkFace}) è già occupata da ${nameDesc}. Seleziona una o più RU libere.`,
         };
       }
     }

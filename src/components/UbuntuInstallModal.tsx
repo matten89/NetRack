@@ -339,18 +339,36 @@ SERVICE_USER="www-data"
 
 cd "\${APP_DIR}"
 
+# Risoluzione automatica di "detected dubious ownership"
+git config --system --add safe.directory "\${APP_DIR}" 2>/dev/null || true
+git config --global --add safe.directory "\${APP_DIR}" 2>/dev/null || true
+git config --global --add safe.directory '*' 2>/dev/null || true
+
 echo "==> [1/6] Controllo aggiornamenti su GitHub..."
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-git fetch origin "\${CURRENT_BRANCH}"
-LOCAL_HASH=$(git rev-parse HEAD)
-REMOTE_HASH=$(git rev-parse "origin/\${CURRENT_BRANCH}")
+git fetch origin --prune
+
+# Rilevamento branch remoto predefinito (main o master)
+REMOTE_BRANCH="main"
+if git rev-parse --verify origin/master >/dev/null 2>&1; then
+    REMOTE_BRANCH="master"
+fi
+
+# Rileva branch locale (estrazione pulita prima riga)
+RAW_BRANCH=$(git branch --show-current 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+CURRENT_BRANCH=$(echo "\${RAW_BRANCH}" | head -n 1 | tr -d '[:space:]')
+if [ -z "\${CURRENT_BRANCH}" ] || [ "\${CURRENT_BRANCH}" = "HEAD" ]; then
+    CURRENT_BRANCH="\${REMOTE_BRANCH}"
+fi
+
+LOCAL_HASH=$(git rev-parse HEAD 2>/dev/null || echo "nessuno")
+REMOTE_HASH=$(git rev-parse "origin/\${CURRENT_BRANCH}" 2>/dev/null || echo "nessuno")
 
 echo "Commit locale:   \${LOCAL_HASH:0:8}"
 echo "Commit su GitHub: \${REMOTE_HASH:0:8}"
 
 echo "==> [2/6] Creazione OBBLIGATORIA Backup di sicurezza preventivo..."
 mkdir -p "\${BACKUP_DIR}"
-echo "\${LOCAL_HASH}" > "\${BACKUP_DIR}/git_commit_hash.txt"
+[ "\${LOCAL_HASH}" != "nessuno" ] && echo "\${LOCAL_HASH}" > "\${BACKUP_DIR}/git_commit_hash.txt"
 [ -d "\${APP_DIR}/dist" ] && cp -r "\${APP_DIR}/dist" "\${BACKUP_DIR}/dist"
 [ -f "\${APP_DIR}/package.json" ] && cp "\${APP_DIR}/package.json" "\${BACKUP_DIR}/"
 [ -f "\${APP_DIR}/.env" ] && cp "\${APP_DIR}/.env" "\${BACKUP_DIR}/"
@@ -359,9 +377,13 @@ echo "[OK] Backup completato in: \${BACKUP_DIR}"
 # Rotazione backup (conserva gli ultimi 10)
 ls -1td \${BACKUP_BASE_DIR}/backup_* | tail -n +11 | xargs rm -rf 2>/dev/null || true
 
-echo "==> [3/6] Download commit da GitHub (git pull)..."
-git stash save "Auto-stash \${TIMESTAMP}" 2>/dev/null || true
-git pull origin "\${CURRENT_BRANCH}"
+echo "==> [3/6] Sincronizzazione codice da GitHub (branch: \${CURRENT_BRANCH})..."
+if ! git rev-parse HEAD >/dev/null 2>&1; then
+    git checkout -B "\${CURRENT_BRANCH}" "origin/\${CURRENT_BRANCH}" --force || git reset --hard "origin/\${CURRENT_BRANCH}"
+else
+    git stash save "Auto-stash \${TIMESTAMP}" 2>/dev/null || true
+    git pull origin "\${CURRENT_BRANCH}" --no-edit || git reset --hard "origin/\${CURRENT_BRANCH}"
+fi
 
 echo "==> [4/6] Installazione moduli npm con flag anti-conflitto..."
 npm install --legacy-peer-deps
@@ -396,6 +418,11 @@ set -euo pipefail
 
 APP_DIR="/var/www/netrack-dcim"
 cd "\${APP_DIR}"
+
+# Risoluzione automatica di "detected dubious ownership"
+git config --system --add safe.directory "\${APP_DIR}" 2>/dev/null || true
+git config --global --add safe.directory "\${APP_DIR}" 2>/dev/null || true
+git config --global --add safe.directory '*' 2>/dev/null || true
 
 [ ! -d ".git" ] && git init
 

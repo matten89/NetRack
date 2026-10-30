@@ -22,6 +22,9 @@ import {
   Shield,
   Activity,
   CheckCircle2,
+  RotateCw,
+  Terminal,
+  X,
 } from 'lucide-react';
 
 interface DeviceTopologyMapProps {
@@ -29,13 +32,22 @@ interface DeviceTopologyMapProps {
 }
 
 export const DeviceTopologyMap: React.FC<DeviceTopologyMapProps> = ({ onSelectDevice }) => {
-  const { state, openTerminal } = useDCIM();
+  const { state, openTerminal, launchRealSSH, runGlobalDiscovery } = useDCIM();
   const [selectedRackFilter, setSelectedRackFilter] = useState<string>('ALL');
   const [selectedCableTypeFilter, setSelectedCableTypeFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeLinkId, setActiveLinkId] = useState<string | null>(null);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const [discoveryStatus, setDiscoveryStatus] = useState<string | null>(null);
+
+  const handleGlobalDiscovery = () => {
+    const res = runGlobalDiscovery();
+    setDiscoveryStatus(
+      `Scansione LLDP/CDP completata con successo: ${res.scannedCount} apparati scansionati, ${res.newCablesCount} nuovi collegamenti registrati automaticamente!`
+    );
+    setTimeout(() => setDiscoveryStatus(null), 7000);
+  };
 
   // Filter devices to those with cables or rack assignment (or match search)
   const connectedDeviceIds = useMemo(() => {
@@ -244,12 +256,33 @@ export const DeviceTopologyMap: React.FC<DeviceTopologyMapProps> = ({ onSelectDe
             </button>
           </div>
 
+          {/* Global LLDP/CDP Scan Button */}
+          <button
+            onClick={handleGlobalDiscovery}
+            className="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-lg shadow-cyan-900/30 transition-all"
+            title="Esegui scansione LLDP e CDP su tutti gli apparati con IP Management"
+          >
+            <RotateCw className="w-3.5 h-3.5" />
+            <span>Scansione LLDP / CDP</span>
+          </button>
+
           <div className="text-xs text-slate-400 font-mono hidden md:block">
             <span className="text-emerald-400 font-bold">{displayedDevices.length}</span> nodi &bull;{' '}
             <span className="text-cyan-400 font-bold">{displayedCables.length}</span> link attivi
           </div>
         </div>
       </div>
+
+      {/* Discovery Feedback Toast */}
+      {discoveryStatus && (
+        <div className="p-3.5 rounded-xl bg-cyan-950/90 border border-cyan-600 text-cyan-200 text-xs flex items-center gap-2.5 shadow-xl animate-in fade-in">
+          <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0" />
+          <span className="flex-1">{discoveryStatus}</span>
+          <button onClick={() => setDiscoveryStatus(null)} className="text-cyan-400 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Main Interactive Canvas Container */}
       <div className="relative bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden min-h-[580px] shadow-2xl flex">
@@ -637,13 +670,22 @@ export const DeviceTopologyMap: React.FC<DeviceTopologyMapProps> = ({ onSelectDe
                 )}
 
                 {activeDevice.ipManagement && (
-                  <button
-                    onClick={() => openTerminal(activeDevice)}
-                    className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-950/40"
-                  >
-                    <Zap className="w-3.5 h-3.5" />
-                    <span>Lancia Sessione SSH</span>
-                  </button>
+                  <div className="space-y-1.5">
+                    <button
+                      onClick={() => launchRealSSH(activeDevice)}
+                      className="w-full py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-950/40"
+                      title="Apri sessione SSH reale in nuova scheda originata dall'IP del server"
+                    >
+                      <Terminal className="w-3.5 h-3.5" />
+                      <span>Avvia SSH Reale (Nuova Scheda)</span>
+                    </button>
+                    <button
+                      onClick={() => openTerminal(activeDevice)}
+                      className="w-full py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs flex items-center justify-center gap-1"
+                    >
+                      <span>Configurazione & Parametri SSH</span>
+                    </button>
+                  </div>
                 )}
               </div>
             )}

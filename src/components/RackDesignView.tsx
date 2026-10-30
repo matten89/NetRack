@@ -24,6 +24,11 @@ import {
   Columns2,
   Sliders,
   Plug,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Edit3,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 export const RackDesignView: React.FC = () => {
@@ -32,6 +37,7 @@ export const RackDesignView: React.FC = () => {
     selectedRackId,
     setSelectedRackId,
     addRack,
+    updateRack,
     deleteRack,
     mountDeviceToRack,
     installPDUToRack,
@@ -44,7 +50,11 @@ export const RackDesignView: React.FC = () => {
   // View mode: 'FRONT' | 'REAR' | 'BOTH' (Affiancato Fronte + Retro)
   const [viewMode, setViewMode] = useState<'FRONT' | 'REAR' | 'BOTH'>('BOTH');
   const [showNewRackModal, setShowNewRackModal] = useState(false);
+  const [showEditRackModal, setShowEditRackModal] = useState(false);
   
+  // Interactive Zoom level (0.7 to 1.4)
+  const [zoomLevel, setZoomLevel] = useState<number>(1.0);
+
   // Standard Device or Shelf mount modal
   const [showMountModal, setShowMountModal] = useState<{
     targetRU: number;
@@ -62,10 +72,21 @@ export const RackDesignView: React.FC = () => {
 
   // New Rack Form state
   const [newRackName, setNewRackName] = useState('');
+  const [newRackRow, setNewRackRow] = useState('');
+  const [newRackPosition, setNewRackPosition] = useState('');
   const [newRackRU, setNewRackRU] = useState<number>(42);
   const [newRackSiteId, setNewRackSiteId] = useState(state.sites[0]?.id || '');
   const [newRackPower, setNewRackPower] = useState<number>(8000);
   const [newRackNotes, setNewRackNotes] = useState('');
+
+  // Edit Rack Form state
+  const [editRackName, setEditRackName] = useState('');
+  const [editRackRow, setEditRackRow] = useState('');
+  const [editRackPosition, setEditRackPosition] = useState('');
+  const [editRackRU, setEditRackRU] = useState<number>(42);
+  const [editRackSiteId, setEditRackSiteId] = useState('');
+  const [editRackPower, setEditRackPower] = useState<number>(8000);
+  const [editRackNotes, setEditRackNotes] = useState('');
 
   // New PDU Form state
   const [pduModel, setPduModel] = useState('PDU Rack 19" 8x Bipasso');
@@ -108,13 +129,23 @@ export const RackDesignView: React.FC = () => {
   const rearFreeRUCount = currentRack.totalRU - rearUsedRUCount;
 
   // Unmounted devices in inventory that can be installed directly
+  const mountedDeviceIds = new Set<string>();
+  state.rackItems.forEach((item) => {
+    if (item.deviceId) mountedDeviceIds.add(item.deviceId);
+    if (item.shelfSubSlots) {
+      item.shelfSubSlots.forEach((s) => {
+        if (s.deviceId) mountedDeviceIds.add(s.deviceId);
+      });
+    }
+  });
+
   const unmountedStandardDevices = state.devices.filter(
-    (d) => !d.rackId && !d.isNonRackable && d.category !== 'MODULE' && d.category !== 'SFP'
+    (d) => !mountedDeviceIds.has(d.id) && !d.isNonRackable && d.category !== 'MODULE' && d.category !== 'SFP'
   );
 
   // Non-rackable devices for shelf installation
   const unmountedShelfDevices = state.devices.filter(
-    (d) => !d.rackId && d.isNonRackable
+    (d) => !mountedDeviceIds.has(d.id) && d.isNonRackable && d.category !== 'MODULE' && d.category !== 'SFP'
   );
 
   const handleCreateRack = (e: React.FormEvent) => {
@@ -123,6 +154,8 @@ export const RackDesignView: React.FC = () => {
 
     addRack({
       name: newRackName.trim(),
+      row: newRackRow.trim() || undefined,
+      position: newRackPosition.trim() || undefined,
       totalRU: newRackRU,
       siteNodeId: newRackSiteId,
       maxPowerWatts: newRackPower,
@@ -131,6 +164,36 @@ export const RackDesignView: React.FC = () => {
 
     setShowNewRackModal(false);
     setNewRackName('');
+    setNewRackRow('');
+    setNewRackPosition('');
+  };
+
+  const handleOpenEditRack = () => {
+    setEditRackName(currentRack.name);
+    setEditRackRow(currentRack.row || '');
+    setEditRackPosition(currentRack.position || '');
+    setEditRackRU(currentRack.totalRU);
+    setEditRackSiteId(currentRack.siteNodeId);
+    setEditRackPower(currentRack.maxPowerWatts || 8000);
+    setEditRackNotes(currentRack.notes || '');
+    setShowEditRackModal(true);
+  };
+
+  const handleSaveEditRack = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editRackName.trim()) return;
+
+    updateRack(currentRack.id, {
+      name: editRackName.trim(),
+      row: editRackRow.trim() || undefined,
+      position: editRackPosition.trim() || undefined,
+      totalRU: editRackRU,
+      siteNodeId: editRackSiteId,
+      maxPowerWatts: editRackPower,
+      notes: editRackNotes.trim(),
+    });
+
+    setShowEditRackModal(false);
   };
 
   const handleQuickAddShelf = (startRU: number, face: RackFace) => {
@@ -238,6 +301,8 @@ export const RackDesignView: React.FC = () => {
   const renderRackElevationColumn = (face: RackFace) => {
     const occupiedMap = face === 'FRONT' ? frontOccupiedMap : rearOccupiedMap;
     const isFront = face === 'FRONT';
+    const slotHeight = Math.max(26, Math.round(46 * zoomLevel));
+    const emptySlotHeight = Math.max(22, Math.round(38 * zoomLevel));
 
     return (
       <div className="flex-1 bg-slate-950 border-4 border-slate-800 rounded-2xl p-3 shadow-2xl relative min-w-[340px]">
@@ -282,7 +347,7 @@ export const RackDesignView: React.FC = () => {
                 return (
                   <div
                     key={`ru-${face}-${ru}`}
-                    style={{ height: `${item.heightRU * 46}px` }}
+                    style={{ height: `${item.heightRU * slotHeight}px` }}
                     className="rounded-lg bg-gradient-to-r from-zinc-950 via-zinc-900 to-zinc-950 border-2 border-amber-500/80 p-2 flex items-center justify-between shadow-lg relative group transition-all"
                   >
                     {/* Left: RU Badge & PDU Model & Illuminated Switch */}
@@ -344,7 +409,7 @@ export const RackDesignView: React.FC = () => {
                 return (
                   <div
                     key={`ru-${face}-${ru}`}
-                    style={{ height: `${item.heightRU * 46}px` }}
+                    style={{ height: `${item.heightRU * slotHeight}px` }}
                     className="rounded-lg bg-amber-950/30 border-2 border-amber-600/70 p-2 flex flex-col justify-between shadow-inner relative group"
                   >
                     <div className="flex items-center justify-between text-[11px] font-mono border-b border-amber-800/40 pb-1">
@@ -453,7 +518,7 @@ export const RackDesignView: React.FC = () => {
               return (
                 <div
                   key={`ru-${face}-${ru}`}
-                  style={{ height: `${item.heightRU * 46}px` }}
+                  style={{ height: `${item.heightRU * slotHeight}px` }}
                   className="rounded-lg bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 border-2 border-cyan-600/80 p-2 flex items-center justify-between shadow-lg relative group"
                 >
                   {/* Left RU Badge & Brand Pill */}
@@ -525,7 +590,8 @@ export const RackDesignView: React.FC = () => {
             return (
               <div
                 key={`ru-${face}-${ru}`}
-                className="h-10 rounded-lg bg-slate-950/70 border border-slate-800/80 hover:border-cyan-500/50 p-2 flex items-center justify-between transition-colors group"
+                style={{ height: `${emptySlotHeight}px` }}
+                className="rounded-lg bg-slate-950/70 border border-slate-800/80 hover:border-cyan-500/50 p-2 flex items-center justify-between transition-colors group"
               >
                 <div className="flex items-center gap-2">
                   <span className="w-8 text-center text-xs font-mono font-semibold text-slate-500 group-hover:text-cyan-400">
@@ -605,6 +671,14 @@ export const RackDesignView: React.FC = () => {
                   ))}
                 </select>
                 <button
+                  onClick={handleOpenEditRack}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition-colors"
+                  title="Modifica parametri rack (nome, fila, posizione stanza, altezza RU, potenza)"
+                >
+                  <Edit3 className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Modifica Rack</span>
+                </button>
+                <button
                   onClick={() => setShowNewRackModal(true)}
                   className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-400 text-xs font-semibold flex items-center gap-1 border border-slate-700"
                   title="Aggiungi nuovo rack"
@@ -613,15 +687,60 @@ export const RackDesignView: React.FC = () => {
                   <span>Nuovo Rack</span>
                 </button>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Posizione: <strong className="text-slate-200">{getSiteHierarchyBreadcrumb(currentRack.siteNodeId, state.sites)}</strong>
+              <p className="text-xs text-slate-400 mt-1 flex flex-wrap items-center gap-x-2">
+                <span>Posizione Sito: <strong className="text-slate-200">{getSiteHierarchyBreadcrumb(currentRack.siteNodeId, state.sites)}</strong></span>
+                {(currentRack.row || currentRack.position) && (
+                  <span className="text-cyan-400 font-mono text-[11px] bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                    Fila: {currentRack.row || '-'} &bull; Pos: {currentRack.position || '-'}
+                  </span>
+                )}
               </p>
             </div>
           </div>
         </div>
 
-        {/* View Mode Switcher: FRONTE / RETRO / AFFIANCATO */}
+        {/* View Mode Switcher, Zoom & Actions */}
         <div className="flex flex-wrap items-center gap-3">
+          {/* Zoom Controller */}
+          <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1 shadow-sm">
+            <span className="text-[10px] font-mono uppercase text-slate-400 flex items-center gap-1 mr-1">
+              <SlidersHorizontal className="w-3 h-3 text-cyan-400" />
+              <span>Zoom</span>
+            </span>
+            <button
+              onClick={() => setZoomLevel((prev) => Math.max(0.65, Number((prev - 0.1).toFixed(2))))}
+              className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              title="Rimpicciolisci vista rack"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            <input
+              type="range"
+              min="0.65"
+              max="1.45"
+              step="0.05"
+              value={zoomLevel}
+              onChange={(e) => setZoomLevel(parseFloat(e.target.value))}
+              className="w-16 sm:w-20 accent-cyan-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+              title={`Livello di zoom: ${Math.round(zoomLevel * 100)}%`}
+            />
+            <button
+              onClick={() => setZoomLevel((prev) => Math.min(1.45, Number((prev + 0.1).toFixed(2))))}
+              className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              title="Ingrandisci vista rack"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => setZoomLevel(1.0)}
+              className="px-1.5 py-0.5 rounded text-[10px] font-mono text-cyan-300 hover:bg-slate-800 font-bold"
+              title="Reimposta zoom al 100%"
+            >
+              {Math.round(zoomLevel * 100)}%
+            </button>
+          </div>
+
+          {/* View Mode Switcher: FRONTE / RETRO / AFFIANCATO */}
           <div className="flex bg-slate-950 border border-slate-800 rounded-xl p-1">
             <button
               onClick={() => setViewMode('BOTH')}
@@ -1061,6 +1180,30 @@ export const RackDesignView: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Fila (Corridoio):</label>
+                  <input
+                    type="text"
+                    value={newRackRow}
+                    onChange={(e) => setNewRackRow(e.target.value)}
+                    placeholder="es. Fila A, Corridoio Caldo"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs outline-none focus:border-cyan-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Posizione / Slot:</label>
+                  <input
+                    type="text"
+                    value={newRackPosition}
+                    onChange={(e) => setNewRackPosition(e.target.value)}
+                    placeholder="es. Pos 03, Slot 4"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs outline-none focus:border-cyan-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">Dimensioni (RU):</label>
                   <select
                     value={newRackRU}
@@ -1126,6 +1269,129 @@ export const RackDesignView: React.FC = () => {
                   className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold"
                 >
                   Crea Rack
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Rack Parameters */}
+      {showEditRackModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+              <div className="flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-cyan-400" />
+                <h3 className="text-base font-bold text-white">Modifica Parametri Rack</h3>
+              </div>
+              <button onClick={() => setShowEditRackModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditRack} className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Nome del Rack:</label>
+                <input
+                  type="text"
+                  required
+                  value={editRackName}
+                  onChange={(e) => setEditRackName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Fila (Corridoio):</label>
+                  <input
+                    type="text"
+                    value={editRackRow}
+                    onChange={(e) => setEditRackRow(e.target.value)}
+                    placeholder="es. Fila A, Corridoio Caldo"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs outline-none focus:border-cyan-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Posizione / Slot:</label>
+                  <input
+                    type="text"
+                    value={editRackPosition}
+                    onChange={(e) => setEditRackPosition(e.target.value)}
+                    placeholder="es. Pos 03, Slot 4"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs outline-none focus:border-cyan-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Altezza (RU):</label>
+                  <select
+                    value={editRackRU}
+                    onChange={(e) => setEditRackRU(parseInt(e.target.value, 10))}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs outline-none focus:border-cyan-500 font-mono"
+                  >
+                    <option value={12}>12 RU (Small Wallmount)</option>
+                    <option value={24}>24 RU (Half-Height)</option>
+                    <option value={42}>42 RU (Full-Height Standard)</option>
+                    <option value={48}>48 RU (Tall Telco)</option>
+                    <option value={52}>52 RU (Hyper-Scale)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">Potenza Max (Watts):</label>
+                  <input
+                    type="number"
+                    value={editRackPower}
+                    onChange={(e) => setEditRackPower(parseInt(e.target.value, 10))}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs outline-none focus:border-cyan-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Collocazione Sito:
+                </label>
+                <select
+                  value={editRackSiteId}
+                  onChange={(e) => setEditRackSiteId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs outline-none focus:border-cyan-500"
+                >
+                  {state.sites.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      [{s.levelName}] {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Note:</label>
+                <textarea
+                  value={editRackNotes}
+                  onChange={(e) => setEditRackNotes(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-xs outline-none focus:border-cyan-500 h-16 resize-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditRackModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold"
+                >
+                  Annulla
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold shadow-lg shadow-cyan-900/30"
+                >
+                  Salva Parametri
                 </button>
               </div>
             </form>

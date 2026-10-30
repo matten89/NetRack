@@ -14,6 +14,8 @@ import { BackupRestoreModal } from './components/BackupRestoreModal';
 import { BrandsModal } from './components/BrandsModal';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { UbuntuInstallModal } from './components/UbuntuInstallModal';
+import { DeviceTypesModal } from './components/DeviceTypesModal';
+import { LoginView } from './components/LoginView';
 import {
   Server,
   Network,
@@ -25,11 +27,16 @@ import {
 } from 'lucide-react';
 
 const DCIMDashboard: React.FC = () => {
-  const { activeTab, terminalDevice, closeTerminal } = useDCIM();
+  const { activeTab, terminalDevice, closeTerminal, isAuthenticated } = useDCIM();
   const [showBackupModal, setShowBackupModal] = useState(false);
   const [showBrandsModal, setShowBrandsModal] = useState(false);
+  const [showDeviceTypesModal, setShowDeviceTypesModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [showUbuntuModal, setShowUbuntuModal] = useState(false);
+
+  if (!isAuthenticated) {
+    return <LoginView />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
@@ -37,6 +44,7 @@ const DCIMDashboard: React.FC = () => {
       <Header
         onOpenBackup={() => setShowBackupModal(true)}
         onOpenBrands={() => setShowBrandsModal(true)}
+        onOpenDeviceTypes={() => setShowDeviceTypesModal(true)}
         onOpenPasswordModal={() => setShowPasswordModal(true)}
         onOpenUbuntuGuide={() => setShowUbuntuModal(true)}
       />
@@ -44,7 +52,10 @@ const DCIMDashboard: React.FC = () => {
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {activeTab === 'inventory' && (
-          <InventoryView onOpenBrands={() => setShowBrandsModal(true)} />
+          <InventoryView
+            onOpenBrands={() => setShowBrandsModal(true)}
+            onOpenDeviceTypes={() => setShowDeviceTypesModal(true)}
+          />
         )}
         {activeTab === 'racks' && <RackDesignView />}
         {activeTab === 'cabling' && <RackCablingView />}
@@ -65,6 +76,10 @@ const DCIMDashboard: React.FC = () => {
 
       {showBrandsModal && (
         <BrandsModal onClose={() => setShowBrandsModal(false)} />
+      )}
+
+      {showDeviceTypesModal && (
+        <DeviceTypesModal onClose={() => setShowDeviceTypesModal(false)} />
       )}
 
       {showPasswordModal && (

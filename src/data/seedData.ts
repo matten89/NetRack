@@ -3,6 +3,7 @@
  */
 import {
   Brand,
+  DeviceType,
   SiteNode,
   Rack,
   RackInstalledItem,
@@ -26,6 +27,19 @@ export const INITIAL_BRANDS: Brand[] = [
   { id: 'mikrotik', name: 'MikroTik', color: '#29323c', defaultPortPrefix: 'ether' },
 ];
 
+export const INITIAL_DEVICE_TYPES: DeviceType[] = [
+  { id: 'type-router', name: 'Router', code: 'ROUTER', color: '#0284c7', defaultHeightRU: 1, description: 'Apparato di instradamento di rete L3 / WAN / BGP' },
+  { id: 'type-switch', name: 'Switch', code: 'SWITCH', color: '#059669', defaultHeightRU: 1, description: 'Commutatore di rete L2/L3 Ethernet e Foglia/Spina' },
+  { id: 'type-firewall', name: 'Firewall', code: 'FIREWALL', color: '#dc2626', defaultHeightRU: 1, description: 'Apparato di sicurezza e perimetro di rete / VPN' },
+  { id: 'type-ap', name: 'Access Point (AP)', code: 'AP', color: '#7c3aed', defaultHeightRU: 1, description: 'Punto di accesso Wireless Wi-Fi enterprise' },
+  { id: 'type-server', name: 'Server', code: 'SERVER', color: '#2563eb', defaultHeightRU: 2, description: 'Server di calcolo e virtualizzazione (Rack/Blade)' },
+  { id: 'type-storage', name: 'Storage SAN/NAS', code: 'STORAGE', color: '#d97706', defaultHeightRU: 2, description: 'Storage di rete, storage array e disk shelf' },
+  { id: 'type-pdu', name: 'PDU / Ciabatta', code: 'PDU', color: '#e11d48', defaultHeightRU: 1, description: 'Unità di distribuzione alimentazione (Schuko/Bipasso/IEC)' },
+  { id: 'type-patch', name: 'Patch Panel', code: 'PATCH_PANEL', color: '#475569', defaultHeightRU: 1, description: 'Pannello di permutazione rame o fibra ottica' },
+  { id: 'type-ups', name: 'UPS', code: 'UPS', color: '#0891b2', defaultHeightRU: 2, description: 'Gruppo di continuità e batterie di backup' },
+  { id: 'type-other', name: 'Altro / Appliance', code: 'OTHER', color: '#64748b', defaultHeightRU: 1, description: 'Altri apparati rack e appliance speciali' },
+];
+
 export const INITIAL_SITES: SiteNode[] = [
   { id: 'site-1', level: 1, levelName: 'Regione', name: 'EMEA' },
   { id: 'site-2', level: 2, levelName: 'Nazione', name: 'Italia', parentId: 'site-1' },
@@ -42,6 +56,8 @@ export const INITIAL_RACKS: Rack[] = [
     name: 'Rack A-01 (Leaf/Spine)',
     totalRU: 42,
     siteNodeId: 'site-6',
+    row: 'Fila A',
+    position: 'Slot 01',
     maxPowerWatts: 8000,
     notes: 'Rack principale di distribuzione rete con doppio feed A/B PDU Schneider',
   },
@@ -50,6 +66,8 @@ export const INITIAL_RACKS: Rack[] = [
     name: 'Rack A-02 (Compute Cluster)',
     totalRU: 42,
     siteNodeId: 'site-6',
+    row: 'Fila A',
+    position: 'Slot 02',
     maxPowerWatts: 12000,
     notes: 'Rack dedicato ai nodi VMware ESXi e cluster Ceph storage',
   },
@@ -58,6 +76,8 @@ export const INITIAL_RACKS: Rack[] = [
     name: 'Rack B-01 (Edge & Telco)',
     totalRU: 24,
     siteNodeId: 'site-6b',
+    row: 'Fila B',
+    position: 'Slot 01',
     maxPowerWatts: 4500,
     notes: 'Terminazione linee esterne carrier e router BGP',
   },

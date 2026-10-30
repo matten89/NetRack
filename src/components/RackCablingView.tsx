@@ -30,9 +30,10 @@ const CABLE_TYPES = [
 ];
 
 export const RackCablingView: React.FC = () => {
-  const { state, addCable, deleteCable, runDiscoveryOnDevice } = useDCIM();
+  const { state, addCable, deleteCable, runDiscoveryOnDevice, runGlobalDiscovery } = useDCIM();
   const [showAddCableModal, setShowAddCableModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'matrix' | 'discovery' | 'topology'>('topology');
+  const [globalDiscoveryStatus, setGlobalDiscoveryStatus] = useState<string | null>(null);
 
   // Discovery state
   const [selectedDiscoveryDeviceId, setSelectedDiscoveryDeviceId] = useState<string>(
@@ -40,6 +41,14 @@ export const RackCablingView: React.FC = () => {
   );
   const [isScanning, setIsScanning] = useState(false);
   const [scanResult, setScanResult] = useState<any>(null);
+
+  const handleRunGlobalDiscovery = () => {
+    const res = runGlobalDiscovery();
+    setGlobalDiscoveryStatus(
+      `Scansione completata: ${res.scannedCount} apparati scansionati, ${res.newCablesCount} nuovi collegamenti registrati nella mappa di cablaggio!`
+    );
+    setTimeout(() => setGlobalDiscoveryStatus(null), 7000);
+  };
 
   // New Cable Form state
   const [cableNumber, setCableNumber] = useState(`CBL-${String(state.cables.length + 1).padStart(3, '0')}`);
@@ -189,6 +198,15 @@ export const RackCablingView: React.FC = () => {
           </div>
 
           <button
+            onClick={handleRunGlobalDiscovery}
+            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-400 hover:text-white font-semibold text-xs flex items-center gap-1.5 border border-slate-700 transition-colors"
+            title="Esegui scansione LLDP/CDP su tutti gli apparati con IP management"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Scansione LLDP / CDP</span>
+          </button>
+
+          <button
             onClick={() => setShowAddCableModal(true)}
             className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-lg shadow-cyan-900/30"
           >
@@ -197,6 +215,16 @@ export const RackCablingView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {globalDiscoveryStatus && (
+        <div className="p-3.5 rounded-xl bg-cyan-950/90 border border-cyan-600 text-cyan-200 text-xs flex items-center gap-2.5 shadow-xl animate-in fade-in">
+          <CheckCircle2 className="w-4 h-4 text-cyan-400 shrink-0" />
+          <span className="flex-1">{globalDiscoveryStatus}</span>
+          <button onClick={() => setGlobalDiscoveryStatus(null)} className="text-cyan-400 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {activeTab === 'topology' ? (
         <DeviceTopologyMap />

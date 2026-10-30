@@ -472,7 +472,9 @@ sudo bash deploy/update-from-github.sh
 4. **Installazione Sicura:** Esegue `npm install --legacy-peer-deps` per garantire compatibilità con Ubuntu 26 / npm 10-12 senza conflitti `ERESOLVE`.
 5. **Compilazione Produzione:** Esegue `npm run build`. Se la compilazione dovesse fallire, lo script attiva **il rollback automatico immediato** per non interrompere il servizio Nginx!
 6. **Ricaricamento Servizi:** Valida Nginx (`nginx -t`) e ricarica la configurazione (`systemctl reload nginx`).
-7. **Healthcheck:** Testa la risposta HTTP 200 su `http://localhost/` e stampa a video l'URL e il comando esatto per l'eventuale rollback.
+#### Risoluzione Automatica di "dubious ownership" e refspec Git
+Se hai configurato il repository con un utente diverso da `root` (es. `cse`), Git potrebbe segnalare l'avviso di sicurezza `detected dubious ownership in repository`.
+Gli script `deploy/update-from-github.sh` e `deploy/setup-github-sync.sh` configurano automaticamente la direttiva `safe.directory` sia a livello di sistema sia a livello globale (`git config --system --add safe.directory /var/www/netrack-dcim`), permettendo l'esecuzione sia con `sudo` che come utente normale senza blocchi o errori di refspec.
 
 ---
 

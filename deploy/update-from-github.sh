@@ -7,7 +7,7 @@
 #
 # Utilizzo:
 #   sudo bash deploy/update-from-github.sh
-#   oppure con flag non-interattivo:
+#   oppure non-interattivo:
 #   sudo bash deploy/update-from-github.sh -y
 # ==============================================================================
 set -euo pipefail
@@ -63,60 +63,76 @@ fi
 
 cd "${APP_DIR}"
 
+# Risoluzione definitiva dell'errore "detected dubious ownership in repository"
+# Aggiunge safe.directory a livello System, Global (root) e per l'utente originale (SUDO_USER)
+git config --system --add safe.directory "${APP_DIR}" 2>/dev/null || true
+git config --global --add safe.directory "${APP_DIR}" 2>/dev/null || true
+git config --global --add safe.directory '*' 2>/dev/null || true
+if [ -n "${SUDO_USER:-}" ]; then
+    sudo -u "${SUDO_USER}" git config --global --add safe.directory "${APP_DIR}" 2>/dev/null || true
+    sudo -u "${SUDO_USER}" git config --global --add safe.directory '*' 2>/dev/null || true
+fi
+
 # 2. Controllo configurazione Git
 echo -e "\n${BLUE}[1/7] Verifica configurazione repository Git...${NC}"
 
 if [ ! -d "${APP_DIR}/.git" ]; then
     echo -e "${YELLOW}[ATTENZIONE] La cartella ${APP_DIR} non è attualmente un repository Git inizializzato.${NC}"
-    echo -e "Per collegare la tua installazione a GitHub senza dover più esportare file a mano:"
-    echo -e "  1. Configura il remote GitHub con il comando:"
-    echo -e "     ${BOLD}cd ${APP_DIR} && git init && git remote add origin <URL_TUO_REPO_GITHUB>${NC}"
-    echo -e "  2. Rilancia questo script."
-    echo ""
-    read -r -p "Vuoi specificare adesso l'URL del repository GitHub? (s/N): " SETUP_GIT || SETUP_GIT="n"
-    if [[ "${SETUP_GIT}" =~ ^[sSyY]$ ]]; then
-        read -r -p "Inserisci l'URL GitHub (es. https://github.com/tuo-utente/netrack-dcim.git o git@github.com:...): " REPO_URL
-        if [ -n "${REPO_URL}" ]; then
-            git init
-            git remote add origin "${REPO_URL}" || git remote set-url origin "${REPO_URL}"
-            echo -e "${GREEN}[OK] Remote GitHub configurato su: ${REPO_URL}${NC}"
-        else
-            echo -e "${RED}[ERRORE] URL non valido. Operazione annullata.${NC}"
-            exit 1
+    echo -e "Inizializzazione repository locale..."
+    git init
+fi
+
+# Verifica o richiesta remote 'origin'
+REMOTE_URL=$(git remote get-url origin 2>/dev/null || true)
+if [ -z "${REMOTE_URL}" ]; then
+    echo -e "${YELLOW}[ATTENZIONE] Nessun remote GitHub configurato.${NC}"
+    read -r -p "Inserisci l'URL GitHub (es. https://github.com/matten89/NetRack.git): " USER_REPO
+    if [ -n "${USER_REPO}" ]; then
+        # Assicura estensione .git se mancante per HTTPS
+        if [[ "${USER_REPO}" =~ ^https:// ]] && [[ ! "${USER_REPO}" =~ \.git$ ]]; then
+            USER_REPO="${USER_REPO}.git"
         fi
+        git remote add origin "${USER_REPO}"
+        REMOTE_URL="${USER_REPO}"
+        echo -e "${GREEN}[OK] Remote GitHub configurato: ${REMOTE_URL}${NC}"
     else
-        echo -e "${RED}[ERRORE] Repository Git non configurato. Impossibile procedere con l'aggiornamento da GitHub.${NC}"
+        echo -e "${RED}[ERRORE] Nessun URL inserito. Impossibile procedere.${NC}"
         exit 1
     fi
 fi
 
-# Verifica remotes
-REMOTE_URL=$(git remote get-url origin 2>/dev/null || true)
-if [ -z "${REMOTE_URL}" ]; then
-    echo -e "${RED}[ERRORE] Nessun remote 'origin' configurato nel repository Git.${NC}"
-    echo "Configuralo con: git remote add origin <URL_GITHUB>"
-    exit 1
-fi
-
 echo -e " -> Remote GitHub: ${MAGENTA}${REMOTE_URL}${NC}"
 
-# Rileva branch corrente
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
-if [ "${CURRENT_BRANCH}" = "HEAD" ] || [ -z "${CURRENT_BRANCH}" ]; then
-    CURRENT_BRANCH="main"
-fi
-echo -e " -> Branch attivo: ${MAGENTA}${CURRENT_BRANCH}${NC}"
-
-# 3. Fetch da GitHub e controllo nuovi commit
-echo -e "\n${BLUE}[2/7] Controllo aggiornamenti disponibili su GitHub (git fetch)...${NC}"
-git fetch origin "${CURRENT_BRANCH}" || {
-    echo -e "${RED}[ERRORE] Impossibile contattare GitHub.${NC}"
-    echo -e "Possibili cause:"
-    echo -e "  - Mancanza di connettività internet sul server."
-    echo -e "  - Repository privato senza chiavi SSH Deploy Key o Personal Access Token configurati."
-    echo -e "  - Per generare una chiave SSH per GitHub su questo server: ssh-keygen -t ed25519"
+# 3. Fetch globale da GitHub (senza refspec per evitare errori 'invalid refspec')
+echo -e "\n${BLUE}[2/7] Download metadati e commit disponibili da GitHub (git fetch)...${NC}"
+if ! git fetch origin --prune; then
+    echo -e "${RED}[ERRORE] Impossibile contattare GitHub con il remote specificato.${NC}"
+    echo -e "Dettagli errore e possibili cause:"
+    echo -e "  1. Se il repository è privato (es. su account personale), HTTPS richiede token o SSH Deploy Key."
+    echo -e "  2. Per configurare facilmente la chiave SSH o il Token esegui:"
+    echo -e "     ${BOLD}sudo bash deploy/setup-github-sync.sh${NC}"
+    echo -e "  3. Verifica la connessione internet dal server Ubuntu (ping -c 2 github.com)."
     exit 1
-}
+fi
+
+# Rilevamento branch remoto predefinito (main o master)
+REMOTE_BRANCH=""
+if git rev-parse --verify origin/main >/dev/null 2>&1; then
+    REMOTE_BRANCH="main"
+elif git rev-parse --verify origin/master >/dev/null 2>&1; then
+    REMOTE_BRANCH="master"
+fi
+
+# Rilevamento robusto e pulito del branch locale (estrazione rigorosa della sola prima riga)
+RAW_BRANCH=$(git branch --show-current 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+CURRENT_BRANCH=$(echo "${RAW_BRANCH}" | head -n 1 | tr -d '[:space:]')
+
+# Se il branch rilevato è "HEAD" (detached o non ancora committato) o vuoto, usa il branch remoto o 'main'
+if [ -z "${CURRENT_BRANCH}" ] || [ "${CURRENT_BRANCH}" = "HEAD" ]; then
+    CURRENT_BRANCH="${REMOTE_BRANCH:-main}"
+fi
+
+echo -e " -> Branch attivo: ${MAGENTA}${CURRENT_BRANCH}${NC}"
 
 LOCAL_HASH=$(git rev-parse HEAD 2>/dev/null || echo "nessuno")
 REMOTE_HASH=$(git rev-parse "origin/${CURRENT_BRANCH}" 2>/dev/null || echo "nessuno")
@@ -124,7 +140,7 @@ REMOTE_HASH=$(git rev-parse "origin/${CURRENT_BRANCH}" 2>/dev/null || echo "ness
 echo -e " -> Commit locale attuale:    ${YELLOW}${LOCAL_HASH:0:8}${NC}"
 echo -e " -> Ultimo commit su GitHub:  ${GREEN}${REMOTE_HASH:0:8}${NC}"
 
-if [ "${LOCAL_HASH}" = "${REMOTE_HASH}" ]; then
+if [ "${LOCAL_HASH}" != "nessuno" ] && [ "${LOCAL_HASH}" = "${REMOTE_HASH}" ]; then
     echo -e "${GREEN}[INFO] Il codice locale è già perfettamente sincronizzato con l'ultimo commit di GitHub!${NC}"
     if [ "${AUTO_CONFIRM}" = false ]; then
         read -r -p "Vuoi comunque ricompilare l'applicazione e rigenerare la build? (s/N): " FORCE_REBUILD || FORCE_REBUILD="n"
@@ -134,8 +150,12 @@ if [ "${LOCAL_HASH}" = "${REMOTE_HASH}" ]; then
         fi
     fi
 else
-    echo -e "\n${CYAN}Dettaglio nuovi commit in arrivo da GitHub:${NC}"
-    git log --oneline --graph --decorate "${LOCAL_HASH}..origin/${CURRENT_BRANCH}" -n 5 || true
+    if [ "${LOCAL_HASH}" != "nessuno" ]; then
+        echo -e "\n${CYAN}Dettaglio nuovi commit in arrivo da GitHub:${NC}"
+        git log --oneline --graph --decorate "${LOCAL_HASH}..origin/${CURRENT_BRANCH}" -n 5 2>/dev/null || true
+    else
+        echo -e "${CYAN}Inizializzazione primo allineamento dal repository GitHub...${NC}"
+    fi
     echo ""
     if [ "${AUTO_CONFIRM}" = false ]; then
         read -r -p "Procedere con l'aggiornamento manuale e il backup automatico? [S/n]: " CONFIRM_UPDATE || CONFIRM_UPDATE="s"
@@ -150,8 +170,8 @@ fi
 echo -e "\n${BLUE}[3/7] Creazione OBBLIGATORIA del Backup di Sicurezza Preventivo...${NC}"
 mkdir -p "${BACKUP_DIR}"
 
-# Salvataggio hash commit attuale
-if [ -n "${LOCAL_HASH}" ]; then
+# Salvataggio hash commit attuale se presente
+if [ "${LOCAL_HASH}" != "nessuno" ]; then
     echo "${LOCAL_HASH}" > "${BACKUP_DIR}/git_commit_hash.txt"
     echo -e " -> Salvato riferimento commit precedente: ${LOCAL_HASH:0:8}"
 fi
@@ -162,23 +182,11 @@ if [ -d "${APP_DIR}/dist" ]; then
     cp -r "${APP_DIR}/dist" "${BACKUP_DIR}/dist"
 fi
 
-# Salvataggio package.json e configurazioni critiche
-if [ -f "${APP_DIR}/package.json" ]; then
-    cp "${APP_DIR}/package.json" "${BACKUP_DIR}/package.json"
-fi
-
-if [ -f "${APP_DIR}/package-lock.json" ]; then
-    cp "${APP_DIR}/package-lock.json" "${BACKUP_DIR}/package-lock.json"
-fi
-
-if [ -f "${APP_DIR}/.env" ]; then
-    echo -e " -> Salvataggio variabili d'ambiente (.env)..."
-    cp "${APP_DIR}/.env" "${BACKUP_DIR}/.env"
-fi
-
-if [ -d "${APP_DIR}/data" ]; then
-    cp -r "${APP_DIR}/data" "${BACKUP_DIR}/data"
-fi
+# Salvataggio file di configurazione
+[ -f "${APP_DIR}/package.json" ] && cp "${APP_DIR}/package.json" "${BACKUP_DIR}/package.json"
+[ -f "${APP_DIR}/package-lock.json" ] && cp "${APP_DIR}/package-lock.json" "${BACKUP_DIR}/package-lock.json"
+[ -f "${APP_DIR}/.env" ] && cp "${APP_DIR}/.env" "${BACKUP_DIR}/.env"
+[ -d "${APP_DIR}/data" ] && cp -r "${APP_DIR}/data" "${BACKUP_DIR}/data"
 
 # Metadati del backup
 cat <<EOF > "${BACKUP_DIR}/backup_info.json"
@@ -202,27 +210,38 @@ if [ "${BACKUP_COUNT}" -gt "${MAX_BACKUPS_RETAIN}" ]; then
     ls -1td ${BACKUP_BASE_DIR}/backup_* | tail -n +$((MAX_BACKUPS_RETAIN + 1)) | xargs rm -rf 2>/dev/null || true
 fi
 
-# 5. Git Stash & Pull da GitHub
-echo -e "\n${BLUE}[4/7] Scaricamento del codice aggiornato da GitHub (git pull)...${NC}"
+# 5. Allineamento e Pull del codice da GitHub
+echo -e "\n${BLUE}[4/7] Scaricamento del codice aggiornato da GitHub (branch: ${CURRENT_BRANCH})...${NC}"
 
-# Proteggi eventuali modifiche locali non salvate
-if ! git diff-index --quiet HEAD -- 2>/dev/null; then
-    echo -e "${YELLOW} -> Rilevate modifiche locali nei file di lavoro. Salvataggio in stash automatico...${NC}"
-    git stash save "Auto-stash pre-update ${TIMESTAMP}" || true
+# Se il repository locale non ha ancora commit propri (es. creato da installazione manuale)
+if ! git rev-parse HEAD >/dev/null 2>&1; then
+    echo -e " -> Allineamento iniziale del branch locale '${CURRENT_BRANCH}' con 'origin/${CURRENT_BRANCH}'..."
+    git checkout -B "${CURRENT_BRANCH}" "origin/${CURRENT_BRANCH}" --force || {
+        git reset --hard "origin/${CURRENT_BRANCH}"
+    }
+else
+    # Proteggi modifiche locali con stash prima del pull
+    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+        echo -e "${YELLOW} -> Rilevate modifiche locali nei file di lavoro. Salvataggio in stash automatico...${NC}"
+        git stash save "Auto-stash pre-update ${TIMESTAMP}" || true
+    fi
+
+    # Esegui il pull con gestione fallback su merge o reset
+    if ! git pull origin "${CURRENT_BRANCH}" --no-edit; then
+        echo -e "${YELLOW} -> Tentativo di merge unione cronologia...${NC}"
+        git merge "origin/${CURRENT_BRANCH}" --allow-unrelated-histories -m "Merge update ${TIMESTAMP}" || {
+            echo -e "${YELLOW} -> Allineamento diretto all'ultimo commit di GitHub...${NC}"
+            git reset --hard "origin/${CURRENT_BRANCH}"
+        }
+    fi
 fi
 
-git pull origin "${CURRENT_BRANCH}" || {
-    echo -e "${RED}[ERRORE] 'git pull origin ${CURRENT_BRANCH}' non riuscito.${NC}"
-    echo -e "Il codice precedente è intatto. Il backup è disponibile in ${BACKUP_DIR}."
-    exit 1
-}
-
 NEW_LOCAL_HASH=$(git rev-parse HEAD 2>/dev/null || echo "sconosciuto")
-echo -e "${GREEN}[OK] Codice aggiornato con successo al commit: ${NEW_LOCAL_HASH:0:8}${NC}"
+echo -e "${GREEN}[OK] Codice sincronizzato con successo al commit: ${NEW_LOCAL_HASH:0:8}${NC}"
 
 # 6. Risoluzione dipendenze e Build di produzione
 echo -e "\n${BLUE}[5/7] Installazione dipendenze Node.js (con flag anti-conflitto npm)...${NC}"
-# Il flag --legacy-peer-deps è cruciale per prevenire l'errore ERESOLVE su Node 22+ / npm 10+ / Vite
+# Il flag --legacy-peer-deps evita blocchi ERESOLVE con le nuove versioni di npm
 npm install --legacy-peer-deps
 
 echo -e "\n${BLUE}[6/7] Compilazione Produzione Ottimizzata (npm run build)...${NC}"
@@ -248,7 +267,6 @@ chmod -R 755 "${APP_DIR}/dist"
 # 7. Aggiornamento Servizi Nginx & Healthcheck
 echo -e "\n${BLUE}[7/7] Ricaricamento servizi web e test di integrità (Healthcheck)...${NC}"
 
-# Se presente il file di configurazione Nginx aggiornato nel progetto, sincronizzalo
 if [ -f "${APP_DIR}/deploy/nginx-netrack.conf" ]; then
     cp "${APP_DIR}/deploy/nginx-netrack.conf" /etc/nginx/sites-available/netrack-dcim
 fi

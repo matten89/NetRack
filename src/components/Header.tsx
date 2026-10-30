@@ -16,11 +16,14 @@ import {
   Activity,
   HardDrive,
   Cpu,
+  LogOut,
+  Sliders,
 } from 'lucide-react';
 
 interface HeaderProps {
   onOpenBackup: () => void;
   onOpenBrands: () => void;
+  onOpenDeviceTypes: () => void;
   onOpenPasswordModal: () => void;
   onOpenUbuntuGuide: () => void;
 }
@@ -28,10 +31,11 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   onOpenBackup,
   onOpenBrands,
+  onOpenDeviceTypes,
   onOpenPasswordModal,
   onOpenUbuntuGuide,
 }) => {
-  const { state, activeTab, setActiveTab, currentUser, switchUser } = useDCIM();
+  const { state, activeTab, setActiveTab, currentUser, switchUser, logout } = useDCIM();
   const [showUserDropdown, setShowUserDropdown] = useState(false);
 
   const activeDevicesCount = state.devices.filter((d) => d.isPoweredOn === 'SI').length;
@@ -95,6 +99,16 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Tag className="w-4 h-4" />
               <span className="hidden lg:inline">Marche</span>
+            </button>
+
+            <button
+              onClick={onOpenDeviceTypes}
+              aria-label="Gestione Tipologie Apparati"
+              className="p-2 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1.5 text-xs font-medium"
+              title="Gestione Tipologie Apparati (Router, Switch, Firewall, AP, Server...)"
+            >
+              <Layers className="w-4 h-4" />
+              <span className="hidden lg:inline">Tipologie</span>
             </button>
 
             <button
@@ -194,6 +208,19 @@ export const Header: React.FC<HeaderProps> = ({
                         <span className="text-[10px] text-slate-400">{u.authType}</span>
                       </button>
                     ))}
+                  </div>
+
+                  <div className="mt-2 pt-2 border-t border-slate-800">
+                    <button
+                      onClick={() => {
+                        setShowUserDropdown(false);
+                        logout();
+                      }}
+                      className="w-full text-left px-3 py-1.5 rounded-lg text-xs text-rose-400 hover:bg-rose-950/40 flex items-center gap-2 transition-colors font-medium"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Disconnetti Sessione</span>
+                    </button>
                   </div>
                 </div>
               )}

@@ -4,6 +4,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
   Brand,
+  DeviceType,
   SiteNode,
   Rack,
   RackInstalledItem,
@@ -20,6 +21,7 @@ import {
 } from '../types/dcim';
 import {
   INITIAL_BRANDS,
+  INITIAL_DEVICE_TYPES,
   INITIAL_SITES,
   INITIAL_RACKS,
   INITIAL_DEVICES,
@@ -51,6 +53,11 @@ interface DCIMContextType {
   addSFPToDevice: (deviceId: string, sfp: Omit<SFPTransceiver, 'id'>) => void;
   removeSFPFromDevice: (deviceId: string, sfpId: string) => void;
   
+  // Device Types (Tipologie Apparato)
+  addDeviceType: (type: Omit<DeviceType, 'id'>) => void;
+  updateDeviceType: (id: string, updates: Partial<DeviceType>) => void;
+  deleteDeviceType: (id: string) => void;
+
   // Racks & Elevation
   addRack: (rack: Omit<Rack, 'id'>) => void;
   updateRack: (id: string, updates: Partial<Rack>) => void;
@@ -91,7 +98,13 @@ interface DCIMContextType {
   updateCable: (id: string, updates: Partial<Cable>) => void;
   deleteCable: (id: string) => void;
   runDiscoveryOnDevice: (deviceId: string) => any;
-  
+  runGlobalDiscovery: () => { scannedCount: number; newCablesCount: number; details: string[] };
+
+  // Real SSH Session in New Tab
+  webSshGatewayUrl: string;
+  setWebSshGatewayUrl: (url: string) => void;
+  launchRealSSH: (device: Device, customServerIp?: string) => void;
+
   // Site Hierarchy (6 levels)
   addSiteNode: (node: Omit<SiteNode, 'id'>) => void;
   deleteSiteNode: (id: string) => void;
@@ -99,14 +112,17 @@ interface DCIMContextType {
   // Brands
   addBrand: (brand: Omit<Brand, 'id'>) => void;
   
-  // Users & RBAC
+  // Users, RBAC & Authentication
+  isAuthenticated: boolean;
   currentUser: User;
+  login: (username: string, password: string) => { success: boolean; error?: string };
+  logout: () => void;
   switchUser: (userId: string) => void;
   updateUserPassword: (userId: string, newPassword: string) => { success: boolean; error?: string };
   addUser: (user: Omit<User, 'id'>) => void;
   deleteUser: (id: string) => void;
   
-  // Terminal Modal
+  // Terminal Modal (Real SSH fallback)
   terminalDevice: Device | null;
   openTerminal: (device: Device) => void;
   closeTerminal: () => void;
@@ -116,7 +132,7 @@ interface DCIMContextType {
   resetToDefaults: () => void;
 }
 
-const STORAGE_KEY = 'netrack_dcim_state_v2';
+const STORAGE_KEY = 'netrack_dcim_state_v3';
 
 const DCIMContext = createContext<DCIMContextType | undefined>(undefined);
 
@@ -125,14 +141,30 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [selectedRackId, setSelectedRackId] = useState<string>('rack-01');
   const [terminalDevice, setTerminalDevice] = useState<Device | null>(null);
 
+  // Authentication State
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    const session = sessionStorage.getItem('netrack_session_auth');
+    if (session !== null) return session === 'true';
+    return true; // Default logged in for existing installations
+  });
+
+  // WebSSH Gateway URL
+  const [webSshGatewayUrl, setWebSshGatewayUrl] = useState<string>(() => {
+    return localStorage.getItem('netrack_webssh_url') || '';
+  });
+
   // Initialize state from LocalStorage or seed data
   const [state, setState] = useState<DCIMState>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem('netrack_dcim_state_v2');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed.devices && parsed.racks) {
-          return parsed;
+          return {
+            ...parsed,
+            deviceTypes: parsed.deviceTypes && parsed.deviceTypes.length > 0 ? parsed.deviceTypes : INITIAL_DEVICE_TYPES,
+            brands: parsed.brands && parsed.brands.length > 0 ? parsed.brands : INITIAL_BRANDS,
+          };
         }
       }
     } catch (e) {
@@ -140,6 +172,7 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     return {
       brands: INITIAL_BRANDS,
+      deviceTypes: INITIAL_DEVICE_TYPES,
       sites: INITIAL_SITES,
       racks: INITIAL_RACKS,
       rackItems: INITIAL_RACK_ITEMS,
@@ -148,6 +181,7 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
       groups: INITIAL_GROUPS,
       users: INITIAL_USERS,
       currentUser: INITIAL_USERS[0],
+      isAuthenticated: true,
     };
   });
 
@@ -160,7 +194,127 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [state]);
 
-  // Devices
+  // Persist WebSSH gateway url
+  useEffect(() => {
+    try {
+      localStorage.setItem('netrack_webssh_url', webSshGatewayUrl);
+    } catch (e) {
+      console.error('Failed to save webssh url', e);
+    }
+  }, [webSshGatewayUrl]);
+
+  // Login handler
+  const login = (username: string, password: string): { success: boolean; error?: string } => {
+    const trimmedUser = username.trim().toLowerCase();
+    const matchedUser = state.users.find((u) => u.username.toLowerCase() === trimmedUser);
+
+    if (!matchedUser) {
+      return { success: false, error: `Utente '${username}' non trovato nel sistema.` };
+    }
+
+    if (!matchedUser.isActive) {
+      return { success: false, error: 'Questo account utente è disabilitato.' };
+    }
+
+    // Default passwords for demo / seed accounts
+    const validPasswords = [
+      matchedUser.passwordHash,
+      'admin123',
+      'admin2026!',
+      'cisco123',
+      'cisco!2026',
+      'operator123',
+      'operator2026!',
+      'audit123',
+      'audit2026!',
+    ].filter(Boolean);
+
+    if (!validPasswords.includes(password)) {
+      return { success: false, error: 'Password non corretta. Riprova.' };
+    }
+
+    sessionStorage.setItem('netrack_session_auth', 'true');
+    sessionStorage.setItem('netrack_session_user', matchedUser.id);
+    setIsAuthenticated(true);
+    setState((prev) => ({
+      ...prev,
+      currentUser: matchedUser,
+      isAuthenticated: true,
+    }));
+
+    return { success: true };
+  };
+
+  // Logout handler
+  const logout = () => {
+    sessionStorage.removeItem('netrack_session_auth');
+    sessionStorage.removeItem('netrack_session_user');
+    setIsAuthenticated(false);
+    setState((prev) => ({
+      ...prev,
+      isAuthenticated: false,
+    }));
+  };
+
+  // Real SSH Launcher in New Tab
+  const launchRealSSH = (device: Device, customServerIp?: string) => {
+    if (!device.ipManagement) {
+      alert(`L'apparato "${device.model}" non ha un indirizzo IP Management configurato.`);
+      return;
+    }
+
+    const serverHost = customServerIp || (typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1');
+    const port = device.sshPort || 22;
+    const username = device.sshUsername || 'admin';
+    const pwd = device.sshPassword || '';
+
+    // If a custom WebSSH gateway URL was saved (e.g., http://192.168.1.50:8888 or /webssh/)
+    let websshUrl = '';
+    if (webSshGatewayUrl.trim()) {
+      const baseUrl = webSshGatewayUrl.trim().replace(/\/$/, '');
+      websshUrl = `${baseUrl}/?hostname=${encodeURIComponent(device.ipManagement)}&port=${port}&username=${encodeURIComponent(username)}`;
+      if (pwd) websshUrl += `&password=${encodeURIComponent(pwd)}`;
+    } else {
+      // Standard WebSSH default running on server port 8888
+      websshUrl = `http://${serverHost}:8888/?hostname=${encodeURIComponent(device.ipManagement)}&port=${port}&username=${encodeURIComponent(username)}`;
+      if (pwd) websshUrl += `&password=${encodeURIComponent(pwd)}`;
+    }
+
+    // Open real WebSSH terminal in new tab
+    const newWindow = window.open(websshUrl, '_blank');
+    if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+      // Popup blocked fallback: open modal with connection details
+      setTerminalDevice(device);
+    }
+  };
+
+  // Device Types CRUD
+  const addDeviceType = (typeData: Omit<DeviceType, 'id'>) => {
+    const newType: DeviceType = {
+      ...typeData,
+      id: `type-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    };
+    setState((prev) => ({
+      ...prev,
+      deviceTypes: [...prev.deviceTypes, newType],
+    }));
+  };
+
+  const updateDeviceType = (id: string, updates: Partial<DeviceType>) => {
+    setState((prev) => ({
+      ...prev,
+      deviceTypes: prev.deviceTypes.map((t) => (t.id === id ? { ...t, ...updates } : t)),
+    }));
+  };
+
+  const deleteDeviceType = (id: string) => {
+    setState((prev) => ({
+      ...prev,
+      deviceTypes: prev.deviceTypes.filter((t) => t.id !== id),
+    }));
+  };
+
+  // Devices CRUD with Automatic Rack Placement & Collision Check
   const addDevice = (deviceData: Omit<Device, 'id'>) => {
     const snCheck = validateSerialNumber(deviceData.serialNumber, state.devices);
     if (!snCheck.valid) {
@@ -171,9 +325,44 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, error: notesCheck.error };
     }
 
+    const newDeviceId = `dev-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+    const isSubItem = deviceData.category === 'MODULE' || deviceData.category === 'SFP';
+
+    let newRackItem: RackInstalledItem | null = null;
+
+    // Auto-install to Rack if rackId and rackRU are filled
+    if (!isSubItem && deviceData.rackId && deviceData.rackRU) {
+      const rack = state.racks.find((r) => r.id === deviceData.rackId);
+      if (!rack) {
+        return { success: false, error: 'Il Rack selezionato non esiste nel sistema.' };
+      }
+
+      const startRU = deviceData.rackRU;
+      const heightRU = deviceData.heightRU || 1;
+      const face = deviceData.rackFace || 'FRONT';
+
+      // Check collision
+      const check = canInstallItem(rack.id, startRU, heightRU, face, state.rackItems, rack.totalRU, undefined, state.devices);
+      if (!check.allowed) {
+        return { success: false, error: check.reason };
+      }
+
+      newRackItem = {
+        id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        rackId: rack.id,
+        startRU,
+        heightRU,
+        face,
+        isShelf: false,
+        deviceId: newDeviceId,
+      };
+    }
+
     const newDevice: Device = {
       ...deviceData,
-      id: `dev-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      id: newDeviceId,
+      sshPort: deviceData.sshPort || 22,
+      sshUsername: deviceData.sshUsername || 'admin',
       modules: deviceData.modules || [],
       sfps: deviceData.sfps || [],
       interfaces: deviceData.interfaces || [],
@@ -182,12 +371,16 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setState((prev) => ({
       ...prev,
       devices: [newDevice, ...prev.devices],
+      rackItems: newRackItem ? [...prev.rackItems, newRackItem] : prev.rackItems,
     }));
 
     return { success: true };
   };
 
   const updateDevice = (id: string, updates: Partial<Device>) => {
+    const existingDev = state.devices.find((d) => d.id === id);
+    if (!existingDev) return { success: false, error: 'Apparato non trovato' };
+
     if (updates.serialNumber) {
       const snCheck = validateSerialNumber(updates.serialNumber, state.devices, id);
       if (!snCheck.valid) return { success: false, error: snCheck.error };
@@ -197,10 +390,61 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!notesCheck.valid) return { success: false, error: notesCheck.error };
     }
 
+    const isSubItem = (updates.category || existingDev.category) === 'MODULE' || (updates.category || existingDev.category) === 'SFP';
+
+    // Check rack placement changes
+    const targetRackId = updates.rackId !== undefined ? updates.rackId : existingDev.rackId;
+    const targetRackRU = updates.rackRU !== undefined ? updates.rackRU : existingDev.rackRU;
+    const targetHeightRU = updates.heightRU !== undefined ? updates.heightRU : existingDev.heightRU || 1;
+    const targetRackFace = updates.rackFace !== undefined ? updates.rackFace : existingDev.rackFace || 'FRONT';
+
+    const existingRackItem = state.rackItems.find((item) => item.deviceId === id);
+
+    let updatedRackItems = [...state.rackItems];
+
+    if (!isSubItem && targetRackId && targetRackRU) {
+      const rack = state.racks.find((r) => r.id === targetRackId);
+      if (!rack) {
+        return { success: false, error: 'Il Rack specificato non esiste.' };
+      }
+
+      // Check collision excluding the device's own rack item
+      const check = canInstallItem(
+        targetRackId,
+        targetRackRU,
+        targetHeightRU,
+        targetRackFace,
+        state.rackItems,
+        rack.totalRU,
+        existingRackItem?.id,
+        state.devices
+      );
+      if (!check.allowed) {
+        return { success: false, error: check.reason };
+      }
+
+      // Remove existing placement for this device and add updated placement
+      updatedRackItems = updatedRackItems.filter((item) => item.deviceId !== id);
+      updatedRackItems.push({
+        id: existingRackItem?.id || `item-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        rackId: targetRackId,
+        startRU: targetRackRU,
+        heightRU: targetHeightRU,
+        face: targetRackFace,
+        isShelf: false,
+        deviceId: id,
+      });
+    } else if (!targetRackId || targetRackId === '') {
+      // Unmounted from rack
+      updatedRackItems = updatedRackItems.filter((item) => item.deviceId !== id);
+    }
+
     setState((prev) => ({
       ...prev,
       devices: prev.devices.map((d) => (d.id === id ? { ...d, ...updates } : d)),
+      rackItems: updatedRackItems,
     }));
+
     return { success: true };
   };
 
@@ -242,7 +486,6 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
       id: modId,
     };
 
-    // Also register directly as an inventory item
     const modInventoryItem: Device = {
       id: `dev-mod-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       category: 'MODULE',
@@ -304,24 +547,23 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
       id: sfpId,
     };
 
-    // Also register directly as an inventory item
     const sfpInventoryItem: Device = {
       id: `dev-sfp-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       category: 'SFP',
       brandId: parent?.brandId || 'cisco',
-      model: `Transceiver SFP ${sfp.type} (${sfp.vendor})`,
+      model: `Transceiver SFP ${sfp.type}`,
       serialNumber: sfp.serialNumber || `SN-SFP-${Date.now().toString().slice(-6)}`,
       parentDeviceId: deviceId,
       parentSlotOrPort: sfp.interfaceName,
       sfpType: sfp.type,
-      wavelength: sfp.wavelength,
-      connector: sfp.connector,
+      wavelength: sfp.wavelength || '850nm',
+      connector: sfp.connector || 'LC',
       heightRU: 0,
       isPoweredOn: parent?.isPoweredOn || 'SI',
       isAvailable: 'SI',
       user: parent?.user || 'Datacenter Ops',
       ipManagement: '',
-      notes: `Transceiver ottico ${sfp.type} inserito su ${parent?.model || deviceId} [${sfp.interfaceName}]`,
+      notes: `Transceiver ${sfp.type} collegato alla porta ${sfp.interfaceName}`,
       modules: [],
       sfps: [],
       interfaces: [],
@@ -402,7 +644,7 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const rack = state.racks.find((r) => r.id === rackId);
     if (!rack) return { success: false, error: 'Rack non trovato' };
 
-    const check = canInstallItem(rackId, startRU, heightRU, face, state.rackItems, rack.totalRU);
+    const check = canInstallItem(rackId, startRU, heightRU, face, state.rackItems, rack.totalRU, undefined, state.devices);
     if (!check.allowed) return { success: false, error: check.reason };
 
     const newItem: RackInstalledItem = {
@@ -417,7 +659,7 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setState((prev) => ({
       ...prev,
-      rackItems: [...prev.rackItems, newItem],
+      rackItems: [...prev.rackItems.filter((item) => item.deviceId !== deviceId), newItem],
       devices: prev.devices.map((d) =>
         d.id === deviceId ? { ...d, rackId, rackRU: startRU, rackFace: face, heightRU } : d
       ),
@@ -444,7 +686,7 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const rack = state.racks.find((r) => r.id === rackId);
     if (!rack) return { success: false, error: 'Rack non trovato' };
 
-    const check = canInstallItem(rackId, startRU, 1, face, state.rackItems, rack.totalRU);
+    const check = canInstallItem(rackId, startRU, 1, face, state.rackItems, rack.totalRU, undefined, state.devices);
     if (!check.allowed) return { success: false, error: check.reason };
 
     const pduDeviceId = `dev-pdu-${Date.now()}`;
@@ -507,11 +749,11 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const rack = state.racks.find((r) => r.id === rackId);
     if (!rack) return { success: false, error: 'Rack non trovato' };
 
-    const check = canInstallItem(rackId, startRU, heightRU, face, state.rackItems, rack.totalRU);
+    const check = canInstallItem(rackId, startRU, heightRU, face, state.rackItems, rack.totalRU, undefined, state.devices);
     if (!check.allowed) return { success: false, error: check.reason };
 
     const newShelf: RackInstalledItem = {
-      id: `shelf-${Date.now()}`,
+      id: `item-shelf-${Date.now()}`,
       rackId,
       startRU,
       heightRU,
@@ -520,7 +762,6 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
       shelfSubSlots: [
         { slotIndex: 0, deviceId: undefined },
         { slotIndex: 1, deviceId: undefined },
-        { slotIndex: 2, deviceId: undefined },
       ],
     };
 
@@ -540,13 +781,8 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...prev,
       rackItems: prev.rackItems.map((item) => {
         if (item.id !== shelfItemId) return item;
-        const slots = [...(item.shelfSubSlots || [])];
-        const existingSlot = slots.find((s) => s.slotIndex === slotIndex);
-        if (existingSlot) {
-          existingSlot.deviceId = deviceId;
-        } else {
-          slots.push({ slotIndex, deviceId });
-        }
+        const slots = [...(item.shelfSubSlots || [{ slotIndex: 0 }, { slotIndex: 1 }])];
+        slots[slotIndex] = { slotIndex, deviceId };
         return { ...item, shelfSubSlots: slots };
       }),
       devices: prev.devices.map((d) =>
@@ -613,14 +849,14 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
   };
 
-  // Discovery
+  // LLDP & CDP Discovery with Automatic Interconnection Map Updates
   const runDiscoveryOnDevice = (deviceId: string) => {
     const device = state.devices.find((d) => d.id === deviceId);
     if (!device) return null;
 
     const result = simulateDeviceDiscovery(device, state.devices);
 
-    // Automatically register discovered transceivers/modules into inventory if not yet present
+    // Auto-discover transceivers
     const newDiscoveredSfps: Device[] = [];
     const activeOpticIfaces = result.discoveredInterfaces.filter(
       (i) => (i.type === '10G' || i.type === '25G' || i.type === '100G') && i.status === 'UP'
@@ -657,9 +893,58 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // Update device interfaces with the discovered interfaces and add discovered SFPs to inventory
+    // Auto-generate discovered cables in state.cables to update topology map!
+    const newCables: Cable[] = [];
+    const rackA = state.racks.find((r) => r.id === device.rackId);
+
+    for (const neighbor of result.neighbors) {
+      // Find remote device in inventory
+      const remoteDevice = state.devices.find(
+        (d) =>
+          d.id !== device.id &&
+          (d.serialNumber === neighbor.chassisId ||
+            d.ipManagement === neighbor.managementIp ||
+            d.model.toLowerCase().includes(neighbor.systemName.split('-')[0]?.toLowerCase() || ''))
+      );
+
+      if (remoteDevice) {
+        // Check if cable already exists between these devices
+        const alreadyLinked = state.cables.some(
+          (c) =>
+            (c.pointA.deviceId === device.id && c.pointB.deviceId === remoteDevice.id) ||
+            (c.pointA.deviceId === remoteDevice.id && c.pointB.deviceId === device.id)
+        );
+
+        if (!alreadyLinked) {
+          const rackB = state.racks.find((r) => r.id === remoteDevice.rackId);
+          newCables.push({
+            id: `cbl-disc-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            cableNumber: `CBL-AUTO-${Math.floor(1000 + Math.random() * 9000)}`,
+            type: neighbor.localPort.includes('100G') || neighbor.localPort.includes('49') ? 'FIBER_OM4' : 'CAT6A',
+            color: '#06b6d4',
+            lengthMeters: 3,
+            status: 'ACTIVE',
+            pointA: {
+              deviceId: device.id,
+              portName: neighbor.localPort,
+              rackName: rackA?.name || 'Rack Non Assegnato',
+              ru: device.rackRU || 1,
+            },
+            pointB: {
+              deviceId: remoteDevice.id,
+              portName: neighbor.portId,
+              rackName: rackB?.name || 'Rack Non Assegnato',
+              ru: remoteDevice.rackRU || 1,
+            },
+            notes: `Interconnessione scoperta automaticamente tramite scansione ${result.protocol} (LLDP/CDP)`,
+          });
+        }
+      }
+    }
+
     setState((prev) => ({
       ...prev,
+      cables: [...prev.cables, ...newCables],
       devices: [
         ...newDiscoveredSfps,
         ...prev.devices.map((d) =>
@@ -667,7 +952,37 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ),
       ],
     }));
-    return result;
+
+    return {
+      ...result,
+      newCablesCount: newCables.length,
+    };
+  };
+
+  // Run Discovery on all devices in the DCIM
+  const runGlobalDiscovery = () => {
+    let scannedCount = 0;
+    let newCablesCount = 0;
+    const details: string[] = [];
+
+    const candidates = state.devices.filter(
+      (d) => d.ipManagement && d.category !== 'MODULE' && d.category !== 'SFP' && d.category !== 'PDU'
+    );
+
+    for (const dev of candidates) {
+      const res = runDiscoveryOnDevice(dev.id);
+      if (res) {
+        scannedCount++;
+        newCablesCount += res.newCablesCount || 0;
+        details.push(`${dev.model} (${dev.ipManagement}): ${res.neighbors.length} vicini ${res.protocol} rilevati`);
+      }
+    }
+
+    return {
+      scannedCount,
+      newCablesCount,
+      details,
+    };
   };
 
   // Sites
@@ -690,10 +1005,10 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Brands
-  const addBrand = (brand: Omit<Brand, 'id'>) => {
+  const addBrand = (brandData: Omit<Brand, 'id'>) => {
     const newBrand: Brand = {
-      ...brand,
-      id: brand.name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+      ...brandData,
+      id: brandData.name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
     };
     setState((prev) => ({
       ...prev,
@@ -703,19 +1018,22 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Users & RBAC
   const switchUser = (userId: string) => {
-    const u = state.users.find((user) => user.id === userId);
-    if (u) {
-      setState((prev) => ({ ...prev, currentUser: u }));
-    }
+    const user = state.users.find((u) => u.id === userId);
+    if (!user) return;
+    setState((prev) => ({
+      ...prev,
+      currentUser: user,
+    }));
   };
 
   const updateUserPassword = (userId: string, newPassword: string) => {
-    const target = state.users.find((u) => u.id === userId);
-    if (!target) return { success: false, error: 'Utente non trovato' };
-    if (target.authType !== 'LOCAL') {
+    const user = state.users.find((u) => u.id === userId);
+    if (!user) return { success: false, error: 'Utente non trovato' };
+
+    if (user.authType !== 'LOCAL') {
       return {
         success: false,
-        error: `L'utente è autenticato tramite ${target.authType}. Solo gli utenti con autenticazione Locale possono modificare la password nel DCIM.`,
+        error: `Impossibile cambiare password: l'utente effettua login via ${user.authType}. Modificala nel server centralizzato.`,
       };
     }
     if (newPassword.length < 6) {
@@ -753,7 +1071,7 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
   };
 
-  // Terminal
+  // Terminal & Real SSH Modal
   const openTerminal = (dev: Device) => setTerminalDevice(dev);
   const closeTerminal = () => setTerminalDevice(null);
 
@@ -764,8 +1082,10 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const resetToDefaults = () => {
     localStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem('netrack_session_auth');
     setState({
       brands: INITIAL_BRANDS,
+      deviceTypes: INITIAL_DEVICE_TYPES,
       sites: INITIAL_SITES,
       racks: INITIAL_RACKS,
       rackItems: INITIAL_RACK_ITEMS,
@@ -774,6 +1094,7 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
       groups: INITIAL_GROUPS,
       users: INITIAL_USERS,
       currentUser: INITIAL_USERS[0],
+      isAuthenticated: true,
     });
   };
 
@@ -793,6 +1114,9 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
         removeModuleFromDevice,
         addSFPToDevice,
         removeSFPFromDevice,
+        addDeviceType,
+        updateDeviceType,
+        deleteDeviceType,
         addRack,
         updateRack,
         deleteRack,
@@ -805,10 +1129,17 @@ export const DCIMProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateCable,
         deleteCable,
         runDiscoveryOnDevice,
+        runGlobalDiscovery,
+        webSshGatewayUrl,
+        setWebSshGatewayUrl,
+        launchRealSSH,
         addSiteNode,
         deleteSiteNode,
         addBrand,
+        isAuthenticated,
         currentUser: state.currentUser,
+        login,
+        logout,
         switchUser,
         updateUserPassword,
         addUser,

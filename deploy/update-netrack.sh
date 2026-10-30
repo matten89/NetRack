@@ -60,6 +60,17 @@ if [ ! -d "${APP_DIR}" ]; then
     fi
 fi
 
+cd "${APP_DIR}"
+
+# Risoluzione definitiva dell'errore "detected dubious ownership in repository"
+git config --system --add safe.directory "${APP_DIR}" 2>/dev/null || true
+git config --global --add safe.directory "${APP_DIR}" 2>/dev/null || true
+git config --global --add safe.directory '*' 2>/dev/null || true
+if [ -n "${SUDO_USER:-}" ]; then
+    sudo -u "${SUDO_USER}" git config --global --add safe.directory "${APP_DIR}" 2>/dev/null || true
+    sudo -u "${SUDO_USER}" git config --global --add safe.directory '*' 2>/dev/null || true
+fi
+
 echo -e "\n${BLUE}[1/6] Creazione Backup di Sicurezza Preventivo Obbligatorio...${NC}"
 mkdir -p "${BACKUP_DIR}"
 

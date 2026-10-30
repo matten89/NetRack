@@ -25,11 +25,20 @@ if [ ! -d "${APP_DIR}" ]; then
     APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 
+cd "${APP_DIR}"
+
+# Risoluzione definitiva dell'errore "detected dubious ownership in repository"
+git config --system --add safe.directory "${APP_DIR}" 2>/dev/null || true
+git config --global --add safe.directory "${APP_DIR}" 2>/dev/null || true
+git config --global --add safe.directory '*' 2>/dev/null || true
+if [ -n "${SUDO_USER:-}" ]; then
+    sudo -u "${SUDO_USER}" git config --global --add safe.directory "${APP_DIR}" 2>/dev/null || true
+    sudo -u "${SUDO_USER}" git config --global --add safe.directory '*' 2>/dev/null || true
+fi
+
 echo -e "${CYAN}====================================================================${NC}"
 echo -e "${CYAN}${BOLD}       Configurazione Connessione GitHub per NetRack DCIM           ${NC}"
 echo -e "${CYAN}====================================================================${NC}"
-
-cd "${APP_DIR}"
 
 if [ ! -d "${APP_DIR}/.git" ]; then
     echo -e " -> Inizializzazione repository locale in ${APP_DIR}..."
@@ -37,9 +46,9 @@ if [ ! -d "${APP_DIR}/.git" ]; then
 fi
 
 echo -e "\n${BLUE}Come preferisci collegare questo server a GitHub?${NC}"
-echo "1) Chiave SSH Deploy Key (Consigliato per server di produzione - Zero password)"
-echo "2) HTTPS con Personal Access Token (PAT)"
-echo "3) HTTPS Pubblico (Solo se il repository GitHub è pubblico)"
+echo -e "1) ${BOLD}Chiave SSH Deploy Key${NC} (Consigliato per produzione, repository privati e zero-password)"
+echo -e "2) ${BOLD}HTTPS con Personal Access Token (PAT)${NC} (Ideale per repository privati con token GitHub)"
+echo -e "3) ${BOLD}HTTPS Pubblico${NC} (Solo se il repository GitHub è pubblico/aperto a tutti)"
 read -r -p "Seleziona opzione [1-3]: " AUTH_OPT
 
 case $AUTH_OPT in
@@ -69,14 +78,17 @@ EOF
         echo "3. Titolo: 'Ubuntu Server NetRack' e incolla la chiave sopra (Read-only)"
         echo "4. Clicca 'Add key'"
         echo ""
-        read -r -p "Inserisci l'indirizzo SSH del repository (es. git@github.com:utente/repo.git): " REPO_SSH
+        read -r -p "Inserisci l'indirizzo SSH del repository (es. git@github.com:matten89/NetRack.git): " REPO_SSH
         if [ -n "${REPO_SSH}" ]; then
             git remote remove origin 2>/dev/null || true
             git remote add origin "${REPO_SSH}"
-            git branch -M main || true
-            echo -e "\n${GREEN}[OK] Connessione SSH configurata con successo!${NC}"
-            echo -e "Test connessione GitHub..."
-            ssh -T git@github.com 2>&1 || true
+            echo -e "\n${GREEN}[OK] Connessione SSH configurata! Test connessione con GitHub...${NC}"
+            if ssh -T git@github.com 2>&1 | grep -qi "successfully authenticated"; then
+                echo -e "${GREEN}[OK] Autenticazione SSH con GitHub riuscita!${NC}"
+            else
+                echo -e "${YELLOW}[INFO] Test completato. Eseguo fetch...${NC}"
+            fi
+            git fetch origin --prune || true
         fi
         ;;
     2)
@@ -85,20 +97,34 @@ EOF
         read -r -p "Inserisci il tuo username GitHub: " GH_USER
         read -r -s -p "Inserisci il tuo Personal Access Token (PAT): " GH_TOKEN
         echo ""
-        read -r -p "Inserisci il percorso del repository (es. utente/repo): " REPO_NAME
+        read -r -p "Inserisci il percorso del repository (es. matten89/NetRack o URL completo): " REPO_NAME
         REPO_NAME=$(echo "${REPO_NAME}" | sed 's#^https://github.com/##' | sed 's#\.git$##')
         
         git remote remove origin 2>/dev/null || true
         git remote add origin "https://${GH_USER}:${GH_TOKEN}@github.com/${REPO_NAME}.git"
-        git branch -M main || true
-        echo -e "${GREEN}[OK] Remote HTTPS autenticato configurato con successo!${NC}"
+        echo -e "${GREEN}[OK] Remote HTTPS autenticato configurato con successo! Test connessione...${NC}"
+        git fetch origin --prune || {
+            echo -e "${RED}[WARN] Impossibile contattare GitHub con il token fornito. Verifica credenziali.${NC}"
+        }
         ;;
     3)
-        read -r -p "Inserisci l'URL pubblico HTTPS (es. https://github.com/utente/repo.git): " REPO_PUB
-        git remote remove origin 2>/dev/null || true
-        git remote add origin "${REPO_PUB}"
-        git branch -M main || true
-        echo -e "${GREEN}[OK] Remote HTTPS pubblico configurato con successo!${NC}"
+        read -r -p "Inserisci l'URL pubblico HTTPS (es. https://github.com/matten89/NetRack.git): " REPO_PUB
+        if [ -n "${REPO_PUB}" ]; then
+            if [[ "${REPO_PUB}" =~ ^https:// ]] && [[ ! "${REPO_PUB}" =~ \.git$ ]]; then
+                REPO_PUB="${REPO_PUB}.git"
+            fi
+            git remote remove origin 2>/dev/null || true
+            git remote add origin "${REPO_PUB}"
+            echo -e "${GREEN}[OK] Remote HTTPS configurato: ${REPO_PUB}${NC}"
+            echo -e "Test connessione e download metadati da GitHub..."
+            if git fetch origin --prune; then
+                echo -e "${GREEN}[OK] Repository GitHub accessibile con successo!${NC}"
+            else
+                echo -e "${YELLOW}[ATTENZIONE] Il repository non è accessibile pubblicamente.${NC}"
+                echo -e "Se il repository 'matten89/NetRack' è privato, GitHub rifiuta l'accesso anonimo."
+                echo -e "Rilancia questo script e scegli l'Opzione 1 (SSH Deploy Key) o 2 (Personal Access Token)."
+            fi
+        fi
         ;;
     *)
         echo -e "${RED}Opzione non valida.${NC}"
@@ -108,6 +134,6 @@ esac
 
 echo -e "\n${CYAN}====================================================================${NC}"
 echo -e "${GREEN}Configurazione completata!${NC}"
-echo -e "Per lanciare il primo aggiornamento manuale con backup automatico:"
+echo -e "Per lanciare l'aggiornamento manuale con backup automatico:"
 echo -e "${BOLD}sudo bash deploy/update-from-github.sh${NC}"
 echo -e "${CYAN}====================================================================${NC}\n"

@@ -26,6 +26,15 @@ export interface Brand {
   defaultPortPrefix?: string;
 }
 
+export interface DeviceType {
+  id: string;
+  name: string; // e.g. "Router", "Switch", "Firewall", "Access Point", "Server", "Storage", "PDU", "Patch Panel", "UPS"
+  code: string; // e.g. "ROUTER", "SWITCH", "FIREWALL", "AP", "SERVER", "STORAGE", "PDU", "PATCH_PANEL", "UPS", "OTHER"
+  color: string; // badge accent color
+  defaultHeightRU?: number; // 1, 2, 4
+  description?: string;
+}
+
 export interface DeviceModule {
   id: string;
   slotName: string;
@@ -92,6 +101,8 @@ export interface Rack {
   totalRU: number; // e.g. 42, 48, 24
   siteNodeId: string; // link to site hierarchy
   siteBreadcrumb?: string;
+  row?: string; // e.g. "Fila A", "Fila B"
+  position?: string; // e.g. "Rack 01", "R04"
   maxPowerWatts?: number;
   notes?: string;
 }
@@ -99,6 +110,7 @@ export interface Rack {
 export interface Device {
   id: string;
   brandId: string;
+  deviceTypeId?: string; // link to customizable DeviceType
   model: string; // text free
   serialNumber: string; // unique, free text
   category?: ItemCategory; // DEVICE (standard chassis), MODULE (scheda aggiuntiva), SFP (transceiver ottico), PDU (ciabatta)
@@ -124,6 +136,13 @@ export interface Device {
   isAvailable: AvailabilityStatus; // Disponibilità (SI/NO)
   user: string; // Utilizzatore (testo)
   ipManagement: string; // IPv4/IPv6 management address
+
+  // SSH Management & Discovery Credentials
+  sshPort?: number; // default 22
+  sshUsername?: string;
+  sshPassword?: string;
+  sshKey?: string;
+
   notes: string; // max 300 characters
   
   // Correlations
@@ -208,6 +227,7 @@ export interface UserGroup {
 
 export interface DCIMState {
   brands: Brand[];
+  deviceTypes: DeviceType[];
   sites: SiteNode[];
   racks: Rack[];
   rackItems: RackInstalledItem[];
@@ -216,4 +236,6 @@ export interface DCIMState {
   users: User[];
   groups: UserGroup[];
   currentUser: User;
+  webSshGatewayUrl?: string; // e.g. "http://localhost:8888" or "/webssh/"
+  isAuthenticated?: boolean;
 }
